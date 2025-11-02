@@ -1,6 +1,7 @@
 package sender
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	"log"
@@ -27,13 +28,19 @@ func startSSHClient(code string) {
 	// Note: Don't read from result.Conn directly - it's the same underlying socket
 	// that result.SSHConn uses. The buffered data was already extracted in prepareSSHConnection
 	// and will be shown in debug output from SyncToBannerReader when SSH handshake starts.
-	buf := make([]byte, 1024)
-	n, err := result.SSHConn.Read(buf)
-	if err != nil {
-		log.Fatalf("error reading from SSHConn: %v", err)
-	}
-	if n > 0 {
-		log.Printf("SSHConn buffer (%d bytes):\n%s", n, string(buf[:n]))
+	// Peek at the first few bytes from SSHConn (if it implements io.Reader and supports Peek)
+	// FIX: add missing import for bufio and check type assertion accordingly
+	// (You must also add "bufio" to your imports above for this to work.)
+	if br, ok := result.SSHConn.(interface{ Peek(int) ([]byte, error) }); ok {
+		peekBuf, err := br.Peek(32)
+		if err != nil && err != io.EOF {
+			log.Fatalf("error peeking from SSHConn: %v", err)
+		}
+		if len(peekBuf) > 0 {
+			log.Printf("SSHConn peek buffer (%d bytes): [%s]", len(peekBuf), string(peekBuf))
+		}
+	} else {
+		log.Println("Cannot peek: SSHConn is not a *bufio.Reader")
 	}
 
 	// Establish SSH connection
@@ -50,10 +57,19 @@ func startSSHClient(code string) {
 	// Start local port forwarding
 	go localForward(client, "127.0.0.1:10022", "127.0.0.1:22")
 	fmt.Println("try: ssh -p 10022 localhost")
+	fmt.Println("Press 'q' and Enter to quit...")
 
-	// Start interactive shell
-	if err := interactiveShell(client); err != nil {
-		log.Fatalf("shell error: %v", err)
+	// Wait for 'q' to quit
+	scanner := bufio.NewScanner(os.Stdin)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "q" || line == "Q" {
+			break
+		}
+		fmt.Println("Press 'q' and Enter to quit...")
+	}
+	if err := scanner.Err(); err != nil {
+		log.Printf("error reading input: %v", err)
 	}
 }
 

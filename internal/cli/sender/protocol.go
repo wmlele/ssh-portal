@@ -2,12 +2,10 @@ package sender
 
 import (
 	"bufio"
-	"bytes"
 	"fmt"
 	"io"
 	"log"
 	"net"
-	"net/textproto"
 	"os"
 	"strconv"
 	"strings"
@@ -18,455 +16,238 @@ import (
 
 // --- Tuning / limits ---
 const (
-	maxHeaderBytes   = 32 * 1024
-	maxHeaderLines   = 200
-	clockSkew        = 30 * time.Second
-	maxDiscardBefore = 64 * 1024 // how many bytes we'll discard while searching for "SSH-"
+	maxHeaderBytes = 32 * 1024
+	maxHeaderLines = 200
+	clockSkew      = 30 * time.Second
 )
 
-// --- Debug flag ---
-// Set SSH_PORTAL_DEBUG environment variable to enable debug output of raw relay responses
-var debugProtocol = true //os.Getenv("SSH_PORTAL_DEBUG") != ""
+// Set SSH_PORTAL_DEBUG env var to enable debug
+var debugProtocol = os.Getenv("SSH_PORTAL_DEBUG") != ""
 
-// --- Protocol response structures ---
+// --- Protocol structures ---
 
-// ProtocolResponse represents a parsed relay protocol response
-type ProtocolResponse struct {
-	Proto string
-	OK    bool
-	Err   string
-	FP    string
-	Exp   int64
-	Alg   string
+type Greeting struct {
+	Proto   string            // must be ssh-relay/1
+	OK      bool              // true if "OK", false if "ERR ..."
+	ErrText string            // optional message after ERR
+	KV      map[string]string // key=value lines (optional)
 }
 
-// --- Protocol communication ---
-
-// ConnectionResult holds the result of connecting and handshaking with the relay
 type ConnectionResult struct {
-	Conn         net.Conn
-	SSHConn      net.Conn
-	Fingerprint  string
+	Conn         net.Conn // raw socket
+	SSHConn      net.Conn // reader positioned at SSH banner
+	Fingerprint  string   // from kv["fp"]
 	ClientConfig *ssh.ClientConfig
 }
 
-// ConnectAndHandshake connects to the relay, performs the protocol handshake,
-// and prepares the connection for SSH. Returns the connection result or an error.
+// --- Entry point ---
+
 func ConnectAndHandshake(relayAddr, code string) (*ConnectionResult, error) {
-	// 1) Connect to relay
+	// 1) Connect
 	sock, err := net.Dial("tcp", relayAddr)
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to relay: %w", err)
+		return nil, fmt.Errorf("connect relay: %w", err)
 	}
 
-	// 2) Send HELLO message
+	// 2) Send HELLO
 	if _, err := fmt.Fprintf(sock, "HELLO sender code=%s\n", code); err != nil {
 		sock.Close()
-		return nil, fmt.Errorf("failed to send HELLO: %w", err)
+		return nil, fmt.Errorf("send HELLO: %w", err)
 	}
-	log.Println("HELLO sent")
 
-	// 3) Read and parse protocol response
+	// 3) Read strict greeting block (leaves SSH banner buffered)
 	br := bufio.NewReader(sock)
-	hdrs, rawResponse, err := readHeaderBlock(br)
+	gr, raw, err := readStrictGreeting(br)
+	if debugProtocol && raw != "" {
+		fmt.Fprintf(os.Stderr, "\n=== Relay Greeting ===\n%s=== END ===\n\n", raw)
+	}
 	if err != nil {
-		sock.Close()
-		return nil, fmt.Errorf("control preface error: %w", err)
-	}
-	log.Println("Header block read")
-
-	// Debug: print raw response if enabled
-	if debugProtocol {
-		fmt.Fprintf(os.Stderr, "\n=== DEBUG: Relay Response ===\n%s=== END DEBUG ===\n\n", rawResponse)
-	}
-
-	resp, err := ParseProtocolResponse(hdrs)
-	if err != nil {
-		sock.Close()
-		return nil, fmt.Errorf("failed to parse protocol response: %w", err)
-	}
-
-	// 4) Validate and process response
-	if err := validateProtocolResponse(resp, hdrs); err != nil {
 		sock.Close()
 		return nil, err
 	}
 
-	printConnectionInfo(resp)
-
-	// 5) Prepare SSH connection with banner synchronization
-	sshConn, err := prepareSSHConnection(sock, br)
-	if err != nil {
+	// 4) Validate greeting
+	if gr.Proto != "ssh-relay/1" {
 		sock.Close()
-		return nil, fmt.Errorf("failed to prepare SSH connection: %w", err)
+		return nil, fmt.Errorf("unsupported protocol %q", gr.Proto)
+	}
+	if !gr.OK {
+		msg := gr.ErrText
+		if msg == "" {
+			msg = "relay reported error"
+		}
+		sock.Close()
+		return nil, fmt.Errorf("relay error: %s", msg)
 	}
 
-	log.Println("SSH connection prepared")
+	fp := strings.TrimSpace(gr.KV["fp"])
+	if fp == "" {
+		sock.Close()
+		return nil, fmt.Errorf("missing required key: fp")
+	}
 
-	// 6) Create SSH client config with pinned host key
-	cfg := createSSHConfig(resp.FP)
+	// Optional: exp + alg
+	if expStr := strings.TrimSpace(gr.KV["exp"]); expStr != "" {
+		sec, err := strconv.ParseInt(expStr, 10, 64)
+		if err != nil {
+			sock.Close()
+			return nil, fmt.Errorf("bad exp: %w", err)
+		}
+		exp := time.Unix(sec, 0)
+		if time.Now().After(exp.Add(clockSkew)) {
+			sock.Close()
+			return nil, fmt.Errorf("relay token expired at %s", exp.UTC().Format(time.RFC3339))
+		}
+	}
+
+	// 5) Build a connection that starts reading exactly at the SSH banner
+	sshConn := &prebufConn{Conn: sock, r: io.MultiReader(br, sock)}
+
+	// 6) Create pinned SSH client config
+	cfg := &ssh.ClientConfig{
+		User: "ignored",
+		Auth: []ssh.AuthMethod{ssh.Password("ignored")},
+		HostKeyCallback: func(host string, addr net.Addr, key ssh.PublicKey) error {
+			got := ssh.FingerprintSHA256(key)
+			if got != fp {
+				return fmt.Errorf("host key mismatch: got %s, want %s", got, fp)
+			}
+			return nil
+		},
+	}
+
+	// Optional: print nice info
+	if alg := strings.TrimSpace(gr.KV["alg"]); alg != "" && gr.KV["exp"] != "" {
+		fmt.Printf("Pinned receiver fp: %s (exp %s, alg %s)\n", fp, gr.KV["exp"], alg)
+	} else if alg != "" {
+		fmt.Printf("Pinned receiver fp: %s (alg %s)\n", fp, alg)
+	} else if gr.KV["exp"] != "" {
+		fmt.Printf("Pinned receiver fp: %s (exp %s)\n", fp, gr.KV["exp"])
+	} else {
+		fmt.Println("Pinned receiver fp:", fp)
+	}
 
 	return &ConnectionResult{
 		Conn:         sock,
 		SSHConn:      sshConn,
-		Fingerprint:  resp.FP,
+		Fingerprint:  fp,
 		ClientConfig: cfg,
 	}, nil
 }
 
-// --- Protocol response parsing ---
+// --- Strict greeting parser ---
 
-// ParseProtocolResponse parses the header block into a ProtocolResponse
-func ParseProtocolResponse(h textproto.MIMEHeader) (*ProtocolResponse, error) {
-	resp := &ProtocolResponse{}
-
-	// Check protocol version
-	resp.Proto = first(h, "Proto")
-	if resp.Proto == "" {
-		return nil, fmt.Errorf("missing protocol version")
-	}
-
-	// Check if OK or ERR
-	okVal := first(h, "Ok")
-	if strings.EqualFold(okVal, "true") {
-		resp.OK = true
-	} else {
-		resp.OK = false
-		// Try to find ERR message
-		errMsg := first(h, "Err", "Error")
-		if errMsg == "" {
-			// Check if there's an ERR line in x-line fields
-			for _, line := range h.Values("x-line") {
-				if strings.HasPrefix(strings.ToUpper(line), "ERR") {
-					parts := strings.SplitN(line, " ", 2)
-					if len(parts) > 1 {
-						errMsg = parts[1]
-					} else {
-						errMsg = "unknown error"
-					}
-					break
-				}
-			}
-		}
-		resp.Err = errMsg
-	}
-
-	// Extract fields
-	resp.FP = first(h, "Fp", "Fingerprint", "Ok-Fp")
-	if expStr := first(h, "Exp"); expStr != "" {
-		if exp, err := parseUnixExpiry(expStr); err == nil {
-			resp.Exp = exp.Unix()
-		}
-	}
-	resp.Alg = first(h, "Alg", "Algorithm")
-
-	return resp, nil
-}
-
-// validateProtocolResponse validates the protocol response and returns an error if invalid
-func validateProtocolResponse(resp *ProtocolResponse, hdrs textproto.MIMEHeader) error {
-	// Check protocol version
-	if resp.Proto != "ssh-relay/1" {
-		return fmt.Errorf("unsupported protocol version: %s", resp.Proto)
-	}
-
-	// Handle ERR responses
-	if !resp.OK {
-		errMsg := resp.Err
-		if errMsg == "" {
-			errMsg = "unknown error"
-		}
-		return fmt.Errorf("relay error: %s", errMsg)
-	}
-
-	// Validate required fields
-	if resp.FP == "" {
-		for k, vs := range hdrs {
-			fmt.Printf("header %q = %q\n", k, strings.Join(vs, ", "))
-		}
-		return fmt.Errorf("missing fp")
-	}
-
-	// Optional expiry check
-	if resp.Exp > 0 {
-		exp := time.Unix(resp.Exp, 0)
-		if time.Now().After(exp.Add(clockSkew)) {
-			return fmt.Errorf("relay token expired at %s", exp.UTC().Format(time.RFC3339))
-		}
-	}
-
-	return nil
-}
-
-// printConnectionInfo prints connection information to stdout
-func printConnectionInfo(resp *ProtocolResponse) {
-	if resp.Exp > 0 {
-		if resp.Alg != "" {
-			fmt.Printf("Pinned receiver fp: %s (exp %d, alg %s)\n", resp.FP, resp.Exp, resp.Alg)
-		} else {
-			fmt.Printf("Pinned receiver fp: %s (exp %d)\n", resp.FP, resp.Exp)
-		}
-	} else {
-		if resp.Alg != "" {
-			fmt.Printf("Pinned receiver fp: %s (alg %s)\n", resp.FP, resp.Alg)
-		} else {
-			fmt.Println("Pinned receiver fp:", resp.FP)
-		}
-	}
-}
-
-// --- Header parsing utilities ---
-
-func canonKey(k string) string {
-	k = strings.TrimSpace(k)
-	k = strings.ReplaceAll(k, " ", "-")
-	return textproto.CanonicalMIMEHeaderKey(k)
-}
-
-func first(h textproto.MIMEHeader, keys ...string) string {
-	for _, k := range keys {
-		if v := h.Get(canonKey(k)); v != "" {
-			return v
-		}
-	}
-	return ""
-}
-
-// readHeaderBlock reads a header block terminated by SSH banner.
-// The protocol format uses blank lines as separators between sections:
+// readStrictGreeting parses exactly:
 //
 //	proto: ssh-relay/1
-//	[blank]
-//	OK/ERR
-//	[blank]
-//	key=value lines (optional)
-//	[blank]
-//	SSH banner
+//	OK | ERR[ <text>]
+//	key=value      (0+ lines; must be '=' form)
+//	<blank line>   (terminator; exactly one)
 //
-// Accepts "Key: value" or "key=value", tolerates a standalone "OK" or "ERR" line.
-// Continues reading until we detect SSH banner in the buffer, then stops.
-// Returns the parsed headers and the raw response text (for debugging).
-func readHeaderBlock(br *bufio.Reader) (textproto.MIMEHeader, string, error) {
-	h := make(textproto.MIMEHeader)
-	tp := textproto.NewReader(br)
+// After the blank line, the next byte must be 'S' of "SSH-"; we do not consume it.
+// We return the raw header text for optional debugging.
+func readStrictGreeting(br *bufio.Reader) (Greeting, string, error) {
+	var raw strings.Builder
+	write := func(s string) { raw.WriteString(s); raw.WriteByte('\n') }
 
-	var rawLines []string
-	total, lines := 0, 0
+	var g Greeting
+	g.KV = make(map[string]string)
 
-	for {
-		// Check if upcoming buffered bytes start with SSH banner
-		if n := br.Buffered(); n > 0 {
-			peek, _ := br.Peek(min(n, 4)) // Only peek at first 4 bytes to check for "SSH-"
-			if bytes.HasPrefix(peek, []byte("SSH-")) {
-				// SSH banner found - return what we've read so far
-				rawResponse := ""
-				if len(rawLines) > 0 {
-					rawResponse = strings.Join(rawLines, "\n") + "\n"
-				}
-				return h, rawResponse, nil
-			}
-		}
+	totalBytes := 0
+	lineCount := 0
 
-		// Try to read a line
-		line, err := tp.ReadLine()
+	readLine := func() (string, error) {
+		s, err := br.ReadString('\n')
 		if err != nil {
-			// On EOF, return what we have (this is normal for ERR responses without SSH banner)
-			if err == io.EOF {
-				if len(rawLines) > 0 {
-					rawResponse := strings.Join(rawLines, "\n") + "\n"
-					return h, rawResponse, nil
-				}
-				return h, "", nil // Empty response
-			}
-			// Other errors
-			if len(rawLines) > 0 {
-				rawResponse := strings.Join(rawLines, "\n") + "\n"
-				return h, rawResponse, nil
-			}
-			return nil, "", fmt.Errorf("preface read: %w", err)
+			return "", fmt.Errorf("read line: %w", err)
+		}
+		lineCount++
+		totalBytes += len(s)
+		if totalBytes > maxHeaderBytes || lineCount > maxHeaderLines {
+			return "", fmt.Errorf("greeting too large")
 		}
 
-		lines++
-		total += len(line) + 1
-		if total > maxHeaderBytes || lines > maxHeaderLines {
-			return nil, "", fmt.Errorf("control preface too large")
-		}
-
-		// Capture raw line for debug output
-		rawLines = append(rawLines, string(line))
-
-		// Check if this line contains SSH banner (unlikely but possible)
-		if bytes.Contains([]byte(line), []byte("SSH-")) {
-			// Found SSH banner in the line - stop here
-			rawResponse := strings.Join(rawLines, "\n") + "\n"
-			return h, rawResponse, nil
-		}
-
-		s := strings.TrimSpace(line)
-		if s == "" {
-			// Blank line - continue reading (protocol uses blanks as separators)
-			continue
-		}
-
-		// Parse non-blank lines
-		if strings.EqualFold(s, "OK") {
-			h.Set("Ok", "true")
-			continue
-		}
-
-		// Handle ERR lines
-		if strings.HasPrefix(strings.ToUpper(s), "ERR") {
-			parts := strings.SplitN(s, " ", 2)
-			if len(parts) > 1 {
-				h.Set("Err", parts[1])
-			} else {
-				h.Set("Err", "unknown error")
-			}
-			h.Set("Ok", "false")
-			continue
-		}
-
-		if i := strings.IndexByte(s, '='); i >= 0 {
-			k := canonKey(s[:i])
-			v := strings.TrimSpace(s[i+1:])
-			h.Add(k, v)
-			continue
-		}
-
-		// Handle "key: value" format
-		if i := strings.IndexByte(s, ':'); i >= 0 {
-			k := canonKey(s[:i])
-			v := strings.TrimSpace(s[i+1:])
-			h.Add(k, v)
-			continue
-		}
-
-		// Unknown line: keep for debugging
-		h.Add("x-line", s)
+		log.Println("Read line:", s)
+		// keep raw as-is (including trailing \n)
+		write(strings.TrimRight(s, "\n"))
+		return strings.TrimRight(s, "\r\n"), nil
 	}
-}
 
-// min returns the minimum of two integers
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-func parseUnixExpiry(exp string) (time.Time, error) {
-	sec, err := strconv.ParseInt(strings.TrimSpace(exp), 10, 64)
+	// 1) proto: ssh-relay/1
+	l, err := readLine()
 	if err != nil {
-		return time.Time{}, err
+		return g, raw.String(), err
 	}
-	return time.Unix(sec, 0), nil
+	if !strings.HasPrefix(strings.ToLower(l), "proto:") {
+		return g, raw.String(), fmt.Errorf("expected 'proto:' line, got %q", l)
+	}
+	g.Proto = strings.TrimSpace(strings.TrimPrefix(l, l[:strings.Index(l, ":")+1]))
+	if g.Proto == "" {
+		return g, raw.String(), fmt.Errorf("empty proto")
+	}
+
+	// 2) OK | ERR[ text]
+	l, err = readLine()
+	if err != nil {
+		return g, raw.String(), err
+	}
+	switch {
+	case l == "OK":
+		g.OK = true
+	case strings.HasPrefix(l, "ERR"):
+		g.OK = false
+		g.ErrText = strings.TrimSpace(strings.TrimPrefix(l, "ERR"))
+	default:
+		return g, raw.String(), fmt.Errorf("expected OK or ERR, got %q", l)
+	}
+
+	if !g.OK {
+		// If error, do not parse key=values, just return now.
+		return g, raw.String(), fmt.Errorf("relay error: %s", g.ErrText)
+	}
+
+	// 3) zero or more key=value lines until a single blank line
+	for {
+		peek, _ := br.Peek(1)
+		if len(peek) == 0 {
+			return g, raw.String(), fmt.Errorf("unexpected EOF before banner")
+		}
+		// We need to read the line to both validate and advance to the terminator.
+		l, err = readLine()
+		if err != nil {
+			return g, raw.String(), err
+		}
+
+		if l == "" { // the single, terminating blank line
+			break
+		}
+
+		k, v, ok := strings.Cut(l, "=")
+		if !ok || strings.TrimSpace(k) == "" {
+			return g, raw.String(), fmt.Errorf("invalid header %q (expected key=value)", l)
+		}
+		// Do not trim spaces inside value; keep exactly what server sent after '='
+		g.KV[strings.TrimSpace(k)] = v
+	}
+
+	// 4) Next byte must start the SSH banner, but we don't consume it
+	// (We can cheaply check without advancing.)
+	b, err := br.Peek(4)
+	if err != nil {
+		return g, raw.String(), fmt.Errorf("peek banner: %w", err)
+	}
+	if string(b) != "SSH-" {
+		return g, raw.String(), fmt.Errorf("expected SSH banner after blank line")
+	}
+
+	return g, raw.String(), nil
 }
 
-// --- SSH banner synchronization ---
+// --- Small adapter to expose buffered bytes first, then the socket ---
 
-// prebufConn feeds r first, then the underlying Conn.
 type prebufConn struct {
 	net.Conn
 	r io.Reader
 }
 
 func (c *prebufConn) Read(p []byte) (int, error) { return c.r.Read(p) }
-
-// SyncToBannerReader discards everything until it encounters "SSH-",
-// then returns data starting exactly at the banner and passes through thereafter.
-type SyncToBannerReader struct {
-	src       io.Reader
-	synced    bool
-	searchBuf []byte
-	discarded int
-}
-
-func NewSyncToBannerReader(r io.Reader) *SyncToBannerReader {
-	return &SyncToBannerReader{src: r, searchBuf: make([]byte, 0, 2048)}
-}
-
-func (s *SyncToBannerReader) Read(p []byte) (int, error) {
-	if s.synced {
-		return s.src.Read(p)
-	}
-
-	log.Println("SyncToBannerReader: Read", len(p))
-
-	tmp := make([]byte, len(p))
-	n, err := s.src.Read(tmp)
-
-	log.Println("SyncToBannerReader: Read", n)
-
-	if n > 0 {
-		s.searchBuf = append(s.searchBuf, tmp[:n]...)
-		// Look for "SSH-" in the accumulated buffer.
-		if idx := bytes.Index(s.searchBuf, []byte("SSH-")); idx >= 0 {
-			log.Println("SyncToBannerReader: Found SSH banner at offset", idx)
-			s.synced = true
-			// Discard bytes before the banner.
-			pre := s.searchBuf[:idx]
-			s.discarded += len(pre)
-			if s.discarded > maxDiscardBefore {
-				return 0, fmt.Errorf("too much preface before SSH banner")
-			}
-			// Return from the banner onward.
-			out := s.searchBuf[idx:]
-			copied := copy(p, out)
-			// Keep any remainder for next Read.
-			s.searchBuf = s.searchBuf[idx+copied:]
-			log.Println("SyncToBannerReader: Returning", copied, "bytes")
-			return copied, nil
-		}
-		// Not found yet; enforce limit
-		if len(s.searchBuf) > maxDiscardBefore {
-			return 0, fmt.Errorf("no SSH banner found within %d bytes", maxDiscardBefore)
-		}
-		// Keep reading until we can find the banner. We don't return data yet.
-		return 0, nil
-	}
-	// Propagate EOF/err (but if we never synced, surface a helpful error)
-	if err == io.EOF && !s.synced {
-		return 0, fmt.Errorf("connection closed before SSH banner")
-	}
-	return n, err
-}
-
-// prepareSSHConnection builds a reader that synchronizes to the SSH banner
-// and wraps it in a connection-like interface.
-func prepareSSHConnection(sock net.Conn, br *bufio.Reader) (net.Conn, error) {
-	// Extract any buffered bytes
-	var pre []byte
-	if n := br.Buffered(); n > 0 {
-		pre = make([]byte, n)
-		if _, err := io.ReadFull(br, pre); err != nil {
-			return nil, fmt.Errorf("failed to read buffered bytes: %w", err)
-		}
-	}
-
-	// Build upstream reader
-	upstream := io.Reader(sock)
-	if len(pre) > 0 {
-		upstream = io.MultiReader(bytes.NewReader(pre), sock)
-	}
-
-	// Synchronize to SSH banner
-	syncReader := NewSyncToBannerReader(upstream)
-
-	// Wrap in connection-like interface
-	return &prebufConn{Conn: sock, r: syncReader}, nil
-}
-
-// createSSHConfig creates an SSH client configuration with pinned host key
-func createSSHConfig(expectedFP string) *ssh.ClientConfig {
-	return &ssh.ClientConfig{
-		User: "ignored",
-		Auth: []ssh.AuthMethod{ssh.Password("ignored")},
-		HostKeyCallback: func(host string, addr net.Addr, key ssh.PublicKey) error {
-			got := ssh.FingerprintSHA256(key)
-			if got != expectedFP {
-				return fmt.Errorf("host key mismatch: %s != %s", got, expectedFP)
-			}
-			return nil
-		},
-	}
-}

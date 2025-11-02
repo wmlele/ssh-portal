@@ -86,7 +86,6 @@ func ComposeResponseHeader(resp ProtocolResponse) string {
 
 	// Protocol version line
 	sb.WriteString("proto: ssh-relay/1\n")
-	sb.WriteString("\n") // blank line after proto
 
 	// OK or ERR line
 	if resp.OK {
@@ -99,8 +98,6 @@ func ComposeResponseHeader(resp ProtocolResponse) string {
 		}
 		sb.WriteString("\n")
 	}
-
-	sb.WriteString("\n") // blank line after OK/ERR
 
 	// Fields (key=value format)
 	if resp.FP != "" {
@@ -219,4 +216,3 @@ func HandleSender(c net.Conn, code string) *Invite {
 
 	return inv
 }
-
