@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/textproto"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -21,6 +22,10 @@ const (
 	clockSkew        = 30 * time.Second
 	maxDiscardBefore = 64 * 1024 // how many bytes we'll discard while searching for "SSH-"
 )
+
+// --- Debug flag ---
+// Set SSH_PORTAL_DEBUG environment variable to enable debug output of raw relay responses
+var debugProtocol = true //os.Getenv("SSH_PORTAL_DEBUG") != ""
 
 // --- Protocol response structures ---
 
@@ -61,10 +66,15 @@ func ConnectAndHandshake(relayAddr, code string) (*ConnectionResult, error) {
 
 	// 3) Read and parse protocol response
 	br := bufio.NewReader(sock)
-	hdrs, err := readHeaderBlock(br)
+	hdrs, rawResponse, err := readHeaderBlock(br)
 	if err != nil {
 		sock.Close()
 		return nil, fmt.Errorf("control preface error: %w", err)
+	}
+
+	// Debug: print raw response if enabled
+	if debugProtocol {
+		fmt.Fprintf(os.Stderr, "\n=== DEBUG: Relay Response ===\n%s=== END DEBUG ===\n\n", rawResponse)
 	}
 
 	resp, err := ParseProtocolResponse(hdrs)
@@ -217,38 +227,83 @@ func first(h textproto.MIMEHeader, keys ...string) string {
 	return ""
 }
 
-// readHeaderBlock reads a header block terminated by a blank line.
-// Accepts "Key: value" or "key=value", tolerates a standalone "OK" line.
-// Stops early if the buffered data already begins with "SSH-".
-func readHeaderBlock(br *bufio.Reader) (textproto.MIMEHeader, error) {
+// readHeaderBlock reads a header block terminated by SSH banner.
+// The protocol format uses blank lines as separators between sections:
+//
+//	proto: ssh-relay/1
+//	[blank]
+//	OK/ERR
+//	[blank]
+//	key=value lines (optional)
+//	[blank]
+//	SSH banner
+//
+// Accepts "Key: value" or "key=value", tolerates a standalone "OK" or "ERR" line.
+// Continues reading until we detect SSH banner in the buffer, then stops.
+// Returns the parsed headers and the raw response text (for debugging).
+func readHeaderBlock(br *bufio.Reader) (textproto.MIMEHeader, string, error) {
 	h := make(textproto.MIMEHeader)
 	tp := textproto.NewReader(br)
 
+	var rawLines []string
 	total, lines := 0, 0
 
 	for {
-		// If upcoming buffered bytes already start with SSH-, we're done with headers.
+		// Check if upcoming buffered bytes start with SSH banner
 		if n := br.Buffered(); n > 0 {
-			if peek, _ := br.Peek(n); bytes.HasPrefix(peek, []byte("SSH-")) {
-				return h, nil
+			peek, _ := br.Peek(min(n, 4)) // Only peek at first 4 bytes to check for "SSH-"
+			if bytes.HasPrefix(peek, []byte("SSH-")) {
+				// SSH banner found - return what we've read so far
+				rawResponse := ""
+				if len(rawLines) > 0 {
+					rawResponse = strings.Join(rawLines, "\n") + "\n"
+				}
+				return h, rawResponse, nil
 			}
 		}
 
+		// Try to read a line
 		line, err := tp.ReadLine()
 		if err != nil {
-			return nil, fmt.Errorf("preface read: %w", err)
+			// On EOF, return what we have (this is normal for ERR responses without SSH banner)
+			if err == io.EOF {
+				if len(rawLines) > 0 {
+					rawResponse := strings.Join(rawLines, "\n") + "\n"
+					return h, rawResponse, nil
+				}
+				return h, "", nil // Empty response
+			}
+			// Other errors
+			if len(rawLines) > 0 {
+				rawResponse := strings.Join(rawLines, "\n") + "\n"
+				return h, rawResponse, nil
+			}
+			return nil, "", fmt.Errorf("preface read: %w", err)
 		}
+
 		lines++
 		total += len(line) + 1
 		if total > maxHeaderBytes || lines > maxHeaderLines {
-			return nil, fmt.Errorf("control preface too large")
+			return nil, "", fmt.Errorf("control preface too large")
+		}
+
+		// Capture raw line for debug output
+		rawLines = append(rawLines, string(line))
+
+		// Check if this line contains SSH banner (unlikely but possible)
+		if bytes.Contains([]byte(line), []byte("SSH-")) {
+			// Found SSH banner in the line - stop here
+			rawResponse := strings.Join(rawLines, "\n") + "\n"
+			return h, rawResponse, nil
 		}
 
 		s := strings.TrimSpace(line)
 		if s == "" {
-			// blank line = end of header block
-			return h, nil
+			// Blank line - continue reading (protocol uses blanks as separators)
+			continue
 		}
+
+		// Parse non-blank lines
 		if strings.EqualFold(s, "OK") {
 			h.Set("Ok", "true")
 			continue
@@ -284,6 +339,14 @@ func readHeaderBlock(br *bufio.Reader) (textproto.MIMEHeader, error) {
 		// Unknown line: keep for debugging
 		h.Add("x-line", s)
 	}
+}
+
+// min returns the minimum of two integers
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func parseUnixExpiry(exp string) (time.Time, error) {
