@@ -174,7 +174,7 @@ func HandleReceiver(c net.Conn, rid string, br *bufio.Reader) (*Invite, net.Conn
 	remoteAddr := c.RemoteAddr().String()
 	log.Printf("[TCP] %s -> receiver connecting with rid=%s", remoteAddr, rid)
 
-	inv := getByRID(rid)
+	inv := GetByRID(rid)
 	if inv == nil || time.Now().After(inv.ExpiresAt) {
 		log.Printf("[TCP] %s -> ERR: invalid or expired rid=%s", remoteAddr, rid)
 		SendErrorResponse(c, "no-invite")
@@ -183,9 +183,9 @@ func HandleReceiver(c net.Conn, rid string, br *bufio.Reader) (*Invite, net.Conn
 	}
 
 	// Check if receiver already attached
-	invMu.Lock()
+	LockInvites()
 	if inv.ReceiverConn != nil {
-		invMu.Unlock()
+		UnlockInvites()
 		log.Printf("[TCP] %s -> ERR: receiver already attached for rid=%s", remoteAddr, rid)
 		SendErrorResponse(c, "already-attached")
 		c.Close()
@@ -195,7 +195,7 @@ func HandleReceiver(c net.Conn, rid string, br *bufio.Reader) (*Invite, net.Conn
 	// Wrap connection with buffered reader to preserve any SSH banner data
 	bufferedC := newBufferedConn(c, br)
 	inv.ReceiverConn = bufferedC
-	invMu.Unlock()
+	UnlockInvites()
 
 	log.Printf("[TCP] %s -> receiver attached successfully: code=%s rid=%s waiting for sender...", remoteAddr, inv.Code, rid)
 
@@ -216,7 +216,7 @@ func HandleSender(c net.Conn, code string) *Invite {
 	remoteAddr := c.RemoteAddr().String()
 	log.Printf("[TCP] %s -> sender connecting with code=%s", remoteAddr, code)
 
-	inv := getByCode(code)
+	inv := GetByCode(code)
 	if inv == nil || time.Now().After(inv.ExpiresAt) || inv.ReceiverConn == nil {
 		log.Printf("[TCP] %s -> ERR: code %s not ready (invalid/expired/no receiver)", remoteAddr, code)
 		SendErrorResponse(c, "not-ready")

@@ -38,7 +38,6 @@ func startSSHClient(code string) {
 
 	// Start local port forwarding
 	go localForward(client, "127.0.0.1:10022", "127.0.0.1:22")
-	fmt.Println("try: ssh -p 10022 localhost")
 	fmt.Println("Press 'q' and Enter to quit...")
 
 	// Wait for 'q' to quit
