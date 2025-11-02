@@ -64,6 +64,7 @@ func ConnectAndHandshake(relayAddr, code string) (*ConnectionResult, error) {
 		sock.Close()
 		return nil, fmt.Errorf("failed to send HELLO: %w", err)
 	}
+	log.Println("HELLO sent")
 
 	// 3) Read and parse protocol response
 	br := bufio.NewReader(sock)
@@ -72,6 +73,7 @@ func ConnectAndHandshake(relayAddr, code string) (*ConnectionResult, error) {
 		sock.Close()
 		return nil, fmt.Errorf("control preface error: %w", err)
 	}
+	log.Println("Header block read")
 
 	// Debug: print raw response if enabled
 	if debugProtocol {
@@ -103,8 +105,6 @@ func ConnectAndHandshake(relayAddr, code string) (*ConnectionResult, error) {
 
 	// 6) Create SSH client config with pinned host key
 	cfg := createSSHConfig(resp.FP)
-
-	log.Println("SSH client config created")
 
 	return &ConnectionResult{
 		Conn:         sock,
@@ -382,19 +382,26 @@ type SyncToBannerReader struct {
 }
 
 func NewSyncToBannerReader(r io.Reader) *SyncToBannerReader {
-	return &SyncToBannerReader{src: r, searchBuf: make([]byte, 0, 1024)}
+	return &SyncToBannerReader{src: r, searchBuf: make([]byte, 0, 2048)}
 }
 
 func (s *SyncToBannerReader) Read(p []byte) (int, error) {
 	if s.synced {
 		return s.src.Read(p)
 	}
+
+	log.Println("SyncToBannerReader: Read", len(p))
+
 	tmp := make([]byte, len(p))
 	n, err := s.src.Read(tmp)
+
+	log.Println("SyncToBannerReader: Read", n)
+
 	if n > 0 {
 		s.searchBuf = append(s.searchBuf, tmp[:n]...)
 		// Look for "SSH-" in the accumulated buffer.
 		if idx := bytes.Index(s.searchBuf, []byte("SSH-")); idx >= 0 {
+			log.Println("SyncToBannerReader: Found SSH banner at offset", idx)
 			s.synced = true
 			// Discard bytes before the banner.
 			pre := s.searchBuf[:idx]
@@ -407,6 +414,7 @@ func (s *SyncToBannerReader) Read(p []byte) (int, error) {
 			copied := copy(p, out)
 			// Keep any remainder for next Read.
 			s.searchBuf = s.searchBuf[idx+copied:]
+			log.Println("SyncToBannerReader: Returning", copied, "bytes")
 			return copied, nil
 		}
 		// Not found yet; enforce limit

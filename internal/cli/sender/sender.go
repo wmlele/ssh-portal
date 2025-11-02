@@ -27,6 +27,14 @@ func startSSHClient(code string) {
 	// Note: Don't read from result.Conn directly - it's the same underlying socket
 	// that result.SSHConn uses. The buffered data was already extracted in prepareSSHConnection
 	// and will be shown in debug output from SyncToBannerReader when SSH handshake starts.
+	buf := make([]byte, 1024)
+	n, err := result.SSHConn.Read(buf)
+	if err != nil {
+		log.Fatalf("error reading from SSHConn: %v", err)
+	}
+	if n > 0 {
+		log.Printf("SSHConn buffer (%d bytes):\n%s", n, string(buf[:n]))
+	}
 
 	// Establish SSH connection
 	cc, chans, reqs, err := ssh.NewClientConn(result.SSHConn, "paired", result.ClientConfig)
