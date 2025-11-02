@@ -89,9 +89,7 @@ type ProtocolResponse struct {
 // ComposeResponseHeader builds the protocol header block according to:
 //
 //	proto: ssh-relay/1
-//
 //	OK
-//
 //	fp=SHA256:...
 //	exp=1730550000
 //	alg=ssh-ed25519

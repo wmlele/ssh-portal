@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"strconv"
 	"syscall"
 	"unsafe"
 
@@ -17,7 +18,7 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-func startSSHServer() {
+func startSSHServer(relayHost string, relayPort int) {
 	// 1) Generate host key (ephemeral; persist if you want TOFU)
 	_, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -30,7 +31,7 @@ func startSSHServer() {
 	fp := ssh.FingerprintSHA256(signer.PublicKey())
 
 	// 2) Connect to relay and perform protocol handshake
-	connResult, mintResp, err := ConnectToRelay(fp)
+	connResult, mintResp, err := ConnectToRelay(relayHost, relayPort, fp)
 	if err != nil {
 		log.Fatalf("failed to connect to relay: %v", err)
 	}
@@ -84,7 +85,7 @@ func handleDirectTCPIP(ch ssh.NewChannel) {
 	}
 	channel, reqs, _ := ch.Accept()
 	go discard(reqs)
-	dst := fmt.Sprintf("%s:%d", msg.DestAddr, msg.DestPort)
+	dst := net.JoinHostPort(msg.DestAddr, strconv.FormatUint(uint64(msg.DestPort), 10))
 	up, err := net.Dial("tcp", dst)
 	if err != nil {
 		channel.Close()
@@ -212,8 +213,8 @@ func handleGlobal(reqs <-chan *ssh.Request, _ *ssh.ServerConn) {
 }
 
 // Run executes the receiver command
-func Run() error {
+func Run(relayHost string, relayPort int) error {
 	fmt.Println("receiver")
-	startSSHServer()
+	startSSHServer(relayHost, relayPort)
 	return nil
 }

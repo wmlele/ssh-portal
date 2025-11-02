@@ -6,11 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-)
-
-const (
-	relayHTTP = "http://127.0.0.1:8080/mint" // adjust
-	relayTCP  = "127.0.0.1:4430"             // adjust
+	"strconv"
 )
 
 // --- Protocol structures ---
@@ -37,7 +33,12 @@ type ConnectionResult struct {
 // --- Protocol communication ---
 
 // MintInvite requests a new invite from the relay using the receiver's fingerprint
-func MintInvite(receiverFP string) (*MintResponse, error) {
+// relayHost is the relay server host
+// relayPort is the TCP port; HTTP will be on port+1
+func MintInvite(relayHost string, relayPort int, receiverFP string) (*MintResponse, error) {
+	httpPort := relayPort + 1
+	relayHTTP := fmt.Sprintf("http://%s/mint", net.JoinHostPort(relayHost, strconv.Itoa(httpPort)))
+
 	body, err := json.Marshal(MintRequest{ReceiverFP: receiverFP})
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal mint request: %w", err)
@@ -83,14 +84,17 @@ func ConnectAndHello(relayAddr, rid string) (*ConnectionResult, error) {
 // 1. Mints an invite using the receiver's fingerprint
 // 2. Connects to relay and sends HELLO message
 // Returns the connection and invite information
-func ConnectToRelay(receiverFP string) (*ConnectionResult, *MintResponse, error) {
+// relayHost is the relay server host
+// relayPort is the TCP port (HTTP will be on port+1)
+func ConnectToRelay(relayHost string, relayPort int, receiverFP string) (*ConnectionResult, *MintResponse, error) {
 	// 1) Mint invite
-	mintResp, err := MintInvite(receiverFP)
+	mintResp, err := MintInvite(relayHost, relayPort, receiverFP)
 	if err != nil {
 		return nil, nil, fmt.Errorf("mint failed: %w", err)
 	}
 
-	// 2) Connect and send HELLO
+	// 2) Connect and send HELLO (TCP uses the specified port)
+	relayTCP := net.JoinHostPort(relayHost, strconv.Itoa(relayPort))
 	connResult, err := ConnectAndHello(relayTCP, mintResp.RID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("connection failed: %w", err)
@@ -100,4 +104,3 @@ func ConnectToRelay(receiverFP string) (*ConnectionResult, *MintResponse, error)
 
 	return connResult, mintResp, nil
 }
-

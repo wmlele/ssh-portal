@@ -6,11 +6,19 @@ import (
 	"ssh-portal/internal/cli/relay"
 )
 
+var (
+	relayPort int
+)
+
 var relayCmd = &cobra.Command{
 	Use:   "relay",
 	Short: "Relay command",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return relay.Run()
+		return relay.Run(relayPort)
 	},
+}
+
+func init() {
+	relayCmd.Flags().IntVar(&relayPort, "port", 4430, "TCP port for relay (HTTP will be on port+1)")
 }
 

@@ -7,15 +7,17 @@ import (
 	"log"
 	"net"
 	"os"
+	"strconv"
 
 	"golang.org/x/crypto/ssh"
 )
 
-const relayTCP = "127.0.0.1:4430" // set me
-
 // --- Main client ---
 
-func startSSHClient(code string) {
+func startSSHClient(relayHost string, relayPort int, code string) {
+	// Build relay TCP address
+	relayTCP := net.JoinHostPort(relayHost, strconv.Itoa(relayPort))
+
 	// Connect and perform protocol handshake
 	result, err := ConnectAndHandshake(relayTCP, code)
 	if err != nil {
@@ -93,10 +95,10 @@ func interactiveShell(c *ssh.Client) error {
 }
 
 // Run executes the sender command
-func Run(code string) error {
+func Run(relayHost string, relayPort int, code string) error {
 	if code == "" {
 		return fmt.Errorf("code is required")
 	}
-	startSSHClient(code)
+	startSSHClient(relayHost, relayPort, code)
 	return nil
 }

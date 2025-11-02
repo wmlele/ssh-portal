@@ -2,6 +2,7 @@ package relay
 
 import (
 	"bufio"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -109,9 +110,13 @@ func splice(a, b net.Conn) {
 }
 
 // Run executes the relay command
-func Run() error {
+// port is the TCP port number; HTTP will be served on port+1
+func Run(port int) error {
+	tcpAddr := fmt.Sprintf(":%d", port)
+	httpAddr := fmt.Sprintf(":%d", port+1)
+
 	StartInviteCleanupLoop()
-	StartHTTPServer(":8080")
-	log.Fatal(tcpServe(":4430"))
+	StartHTTPServer(httpAddr)
+	log.Fatal(tcpServe(tcpAddr))
 	return nil
 }

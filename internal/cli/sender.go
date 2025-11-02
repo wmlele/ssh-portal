@@ -10,7 +10,9 @@ import (
 )
 
 var (
-	senderCode string
+	senderCode         string
+	senderRelayHost    string
+	senderRelayPort    int
 )
 
 var senderCmd = &cobra.Command{
@@ -24,12 +26,14 @@ var senderCmd = &cobra.Command{
 		if code == "" {
 			return fmt.Errorf("code is required (use --code flag or config)")
 		}
-		return sender.Run(code)
+		return sender.Run(senderRelayHost, senderRelayPort, code)
 	},
 }
 
 func init() {
 	senderCmd.Flags().StringVarP(&senderCode, "code", "c", "", "connection code")
+	senderCmd.Flags().StringVar(&senderRelayHost, "relay", "localhost", "Relay server host")
+	senderCmd.Flags().IntVar(&senderRelayPort, "relay-port", 4430, "Relay server TCP port")
 	_ = viper.BindPFlag("sender.code", senderCmd.Flags().Lookup("code"))
 	_ = viper.BindEnv("sender.code", "SSH_PORTAL_SENDER_CODE")
 }
