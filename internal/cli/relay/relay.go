@@ -1,0 +1,272 @@
+package relay
+
+import (
+	"bufio"
+	"crypto/rand"
+	"encoding/base32"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log"
+	"math/big"
+	"net"
+	"net/http"
+	"strings"
+	"sync"
+	"time"
+)
+
+// ====== invite registry ======
+type Invite struct {
+	RID          string
+	Code         string
+	ReceiverFP   string // "SHA256:..."
+	ExpiresAt    time.Time
+	ReceiverConn net.Conn
+	sentOK       bool
+}
+
+var (
+	invMu   sync.Mutex
+	invByID = map[string]*Invite{}
+	invByCd = map[string]*Invite{}
+)
+
+func mint(receiverFP string, ttl time.Duration) *Invite {
+	rid := randB32(16)               // rendezvous id (base32)
+	code := fmtCode()                // human code
+	exp := time.Now().Add(ttl).UTC() // expiry
+	inv := &Invite{RID: rid, Code: code, ReceiverFP: receiverFP, ExpiresAt: exp}
+	invMu.Lock()
+	invByID[rid] = inv
+	invByCd[code] = inv
+	invMu.Unlock()
+	return inv
+}
+
+func getByRID(rid string) *Invite   { invMu.Lock(); defer invMu.Unlock(); return invByID[rid] }
+func getByCode(code string) *Invite { invMu.Lock(); defer invMu.Unlock(); return invByCd[code] }
+func cleanupLoop() {
+	t := time.NewTicker(1 * time.Minute)
+	for range t.C {
+		now := time.Now()
+		invMu.Lock()
+		cleaned := 0
+		for k, v := range invByID {
+			if now.After(v.ExpiresAt) {
+				delete(invByID, k)
+				delete(invByCd, v.Code)
+				if v.ReceiverConn != nil {
+					log.Printf("[CLEANUP] closing expired connection: code=%s rid=%s", v.Code, v.RID)
+					v.ReceiverConn.Close()
+				}
+				cleaned++
+			}
+		}
+		invMu.Unlock()
+		if cleaned > 0 {
+			log.Printf("[CLEANUP] removed %d expired invite(s)", cleaned)
+		}
+	}
+}
+
+// ====== HTTP: /mint ======
+type mintReq struct {
+	ReceiverFP string `json:"receiver_fp"`
+	TTLSeconds int    `json:"ttl_seconds,omitempty"` // optional; default 600
+}
+type mintResp struct {
+	Code string    `json:"code"`
+	RID  string    `json:"rid"`
+	Exp  time.Time `json:"exp"`
+}
+
+func handleMint(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		log.Printf("[HTTP] %s %s -> 405 Method Not Allowed", r.Method, r.URL.Path)
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	var req mintReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || !strings.HasPrefix(req.ReceiverFP, "SHA256:") {
+		log.Printf("[HTTP] %s %s -> 400 Bad Request (bad json or fp)", r.Method, r.URL.Path)
+		http.Error(w, "bad json or fp", http.StatusBadRequest)
+		return
+	}
+	ttl := 10 * time.Minute
+	if req.TTLSeconds > 0 && req.TTLSeconds <= 3600 {
+		ttl = time.Duration(req.TTLSeconds) * time.Second
+	}
+	inv := mint(req.ReceiverFP, ttl)
+	log.Printf("[MINT] receiver connected: fp=%s code=%s rid=%s expires=%s", req.ReceiverFP, inv.Code, inv.RID, inv.ExpiresAt.Format(time.RFC3339))
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(mintResp{Code: inv.Code, RID: inv.RID, Exp: inv.ExpiresAt})
+}
+
+// ====== TCP rendezvous/splice ======
+func tcpServe(addr string) error {
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
+	log.Printf("relay TCP listening on %s", addr)
+	for {
+		c, err := ln.Accept()
+		if err != nil {
+			log.Printf("[TCP] accept error: %v", err)
+			continue
+		}
+		log.Printf("[TCP] new connection from %s", c.RemoteAddr())
+		go handleTCP(c)
+	}
+}
+
+func handleTCP(c net.Conn) {
+	remoteAddr := c.RemoteAddr().String()
+	// read exactly one line like:
+	//   "HELLO receiver rid=<rid>\n"
+	//   "HELLO sender code=<code>\n"
+	_ = c.SetDeadline(time.Now().Add(20 * time.Second))
+	br := bufio.NewReader(c)
+	line, err := br.ReadString('\n')
+	if err != nil {
+		log.Printf("[TCP] %s -> read error: %v", remoteAddr, err)
+		c.Close()
+		return
+	}
+	_ = c.SetDeadline(time.Time{}) // clear deadline
+	line = strings.TrimSpace(line)
+	log.Printf("[TCP] %s -> received: %s", remoteAddr, line)
+	parts := strings.Split(line, " ")
+	if len(parts) < 3 || parts[0] != "HELLO" {
+		log.Printf("[TCP] %s -> invalid message format, closing", remoteAddr)
+		c.Close()
+		return
+	}
+	side := parts[1]
+	switch side {
+	case "receiver":
+		rid := strings.TrimPrefix(kv(parts[2], "rid="), "rid=")
+		log.Printf("[TCP] %s -> receiver connecting with rid=%s", remoteAddr, rid)
+		inv := getByRID(rid)
+		if inv == nil || time.Now().After(inv.ExpiresAt) {
+			log.Printf("[TCP] %s -> ERR: invalid or expired rid=%s", remoteAddr, rid)
+			io.WriteString(c, "ERR no-invite\n")
+			c.Close()
+			return
+		}
+		// attach
+		invMu.Lock()
+		if inv.ReceiverConn != nil {
+			invMu.Unlock()
+			log.Printf("[TCP] %s -> ERR: receiver already attached for rid=%s", remoteAddr, rid)
+			io.WriteString(c, "ERR already-attached\n")
+			c.Close()
+			return
+		}
+		inv.ReceiverConn = c
+		invMu.Unlock()
+		log.Printf("[TCP] %s -> receiver attached successfully: code=%s rid=%s waiting for sender...", remoteAddr, inv.Code, rid)
+		// block until sender pairs or timeout
+		<-time.After(inv.ExpiresAt.Sub(time.Now()))
+		log.Printf("[TCP] %s -> receiver connection timeout/closed", remoteAddr)
+		// if timeout, close conn (cleanup loop will catch)
+	case "sender":
+		code := strings.TrimPrefix(kv(parts[2], "code="), "code=")
+		log.Printf("[TCP] %s -> sender connecting with code=%s", remoteAddr, code)
+		inv := getByCode(code)
+		if inv == nil || time.Now().After(inv.ExpiresAt) || inv.ReceiverConn == nil {
+			log.Printf("[TCP] %s -> ERR: code %s not ready (invalid/expired/no receiver)", remoteAddr, code)
+			io.WriteString(c, "ERR not-ready\n")
+			c.Close()
+			return
+		}
+		// tell sender the authoritative fingerprint before splicing
+		if !inv.sentOK {
+			fmt.Fprintf(c, "OK fp=%s exp=%d\n", inv.ReceiverFP, inv.ExpiresAt.Unix())
+			inv.sentOK = true
+			log.Printf("[TCP] %s -> sender authenticated: code=%s fp=%s", remoteAddr, code, inv.ReceiverFP)
+		}
+		// splice c <-> inv.ReceiverConn
+		rc := inv.ReceiverConn
+		rcAddr := rc.RemoteAddr().String()
+		// remove from maps to make it one-shot
+		invMu.Lock()
+		delete(invByID, inv.RID)
+		delete(invByCd, inv.Code)
+		invMu.Unlock()
+		log.Printf("[PAIR] successfully paired: sender=%s receiver=%s code=%s rid=%s", remoteAddr, rcAddr, inv.Code, inv.RID)
+		log.Printf("[SPLICE] bridging sender=%s <-> receiver=%s", remoteAddr, rcAddr)
+		splice(rc, c) // closes both
+		log.Printf("[SPLICE] connection closed: sender=%s receiver=%s", remoteAddr, rcAddr)
+	default:
+		log.Printf("[TCP] %s -> ERR: unknown side '%s'", remoteAddr, side)
+		io.WriteString(c, "ERR bad-side\n")
+		c.Close()
+	}
+}
+
+func kv(s, prefix string) string {
+	if strings.HasPrefix(s, prefix) {
+		return s
+	}
+	return ""
+}
+
+func splice(a, b net.Conn) {
+	defer a.Close()
+	defer b.Close()
+	done := make(chan struct{}, 2)
+	var aBytes, bBytes int64
+	aAddr := a.RemoteAddr().String()
+	bAddr := b.RemoteAddr().String()
+	go func() {
+		n, _ := io.Copy(a, b)
+		bBytes = n
+		done <- struct{}{}
+	}()
+	go func() {
+		n, _ := io.Copy(b, a)
+		aBytes = n
+		done <- struct{}{}
+	}()
+	<-done // wait for first direction
+	<-done // wait for second direction
+	log.Printf("[SPLICE] stats: %s <-> %s (%d bytes a->b, %d bytes b->a)",
+		aAddr, bAddr, bBytes, aBytes)
+}
+
+func randB32(n int) string {
+	b := make([]byte, n)
+	_, _ = rand.Read(b)
+	return strings.TrimRight(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(b), "=")
+}
+
+var words = []string{
+	"alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india",
+	"juliet", "kilo", "lima", "mike", "november", "oscar", "papa", "quebec", "romeo",
+	"sierra", "tango", "uniform", "victor", "whiskey", "xray", "yankee", "zulu",
+}
+
+func fmtCode() string {
+	w1 := words[randN(len(words))]
+	w2 := words[randN(len(words))]
+	num := randN(9000) + 1000
+	return fmt.Sprintf("%s-%s-%d", w1, w2, num)
+}
+func randN(n int) int {
+	v, _ := rand.Int(rand.Reader, big.NewInt(int64(n)))
+	return int(v.Int64())
+}
+
+// Run executes the relay command
+func Run() error {
+	go cleanupLoop()
+	http.HandleFunc("/mint", handleMint)
+	go func() {
+		log.Println("relay HTTP on :8080 (POST /mint)")
+		log.Fatal(http.ListenAndServe(":8080", nil))
+	}()
+	log.Fatal(tcpServe(":4430"))
+	return nil
+}

@@ -1,0 +1,5 @@
+log:
+  level: info
+
+hello:
+  message: "from config file"

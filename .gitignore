@@ -1,0 +1,55 @@
+# — Go build outputs —
+/bin/
+/dist/
+/build/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# go tool artifacts
+*.cover
+*.coverprofile
+coverage.*
+coverage.out
+*.pprof
+cpu.prof
+mem.prof
+block.prof
+trace.out
+
+# Module/workspace
+# (keep go.mod, go.sum; ignore vendored deps unless you intentionally vendor)
+/vendor/
+
+# Task (go-task) cache/state
+/.task/
+
+# Logs & temp
+*.log
+/tmp/
+*.tmp
+
+# Local env & secrets
+.env
+.env.*
+*.local.yaml
+*.local.yml
+*.secrets.yaml
+*.secrets.yml
+configs/*.local.yaml
+configs/*.secrets.yaml
+
+# Editors/IDE
+.vscode/
+.idea/
+*.code-workspace
+*.swp
+*.swo
+
+# OS cruft
+.DS_Store
+Thumbs.db

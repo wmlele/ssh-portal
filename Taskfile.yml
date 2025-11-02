@@ -1,0 +1,31 @@
+version: '3'
+
+vars:
+  BINARY: ssh-portal
+
+tasks:
+  build:
+    cmds:
+      - go build -o bin/{{.BINARY}} ./cmd/ssh-portal
+    sources:
+      - cmd/**/*
+      - internal/**/*
+    generates:
+      - bin/{{.BINARY}}
+
+  run:
+    deps: [build]
+    cmds:
+      - ./bin/{{.BINARY}} {{.CLI_ARGS}}
+
+  test:
+    cmds:
+      - go test ./...
+
+  lint:
+    cmds:
+      - golangci-lint run
+
+  clean:
+    cmds:
+      - rm -rf bin
