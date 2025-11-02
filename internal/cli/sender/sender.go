@@ -25,24 +25,6 @@ func startSSHClient(code string) {
 
 	log.Println("SSH connection prepared", result.SSHConn)
 
-	// Note: Don't read from result.Conn directly - it's the same underlying socket
-	// that result.SSHConn uses. The buffered data was already extracted in prepareSSHConnection
-	// and will be shown in debug output from SyncToBannerReader when SSH handshake starts.
-	// Peek at the first few bytes from SSHConn (if it implements io.Reader and supports Peek)
-	// FIX: add missing import for bufio and check type assertion accordingly
-	// (You must also add "bufio" to your imports above for this to work.)
-	if br, ok := result.SSHConn.(interface{ Peek(int) ([]byte, error) }); ok {
-		peekBuf, err := br.Peek(32)
-		if err != nil && err != io.EOF {
-			log.Fatalf("error peeking from SSHConn: %v", err)
-		}
-		if len(peekBuf) > 0 {
-			log.Printf("SSHConn peek buffer (%d bytes): [%s]", len(peekBuf), string(peekBuf))
-		}
-	} else {
-		log.Println("Cannot peek: SSHConn is not a *bufio.Reader")
-	}
-
 	// Establish SSH connection
 	cc, chans, reqs, err := ssh.NewClientConn(result.SSHConn, "paired", result.ClientConfig)
 	if err != nil {
