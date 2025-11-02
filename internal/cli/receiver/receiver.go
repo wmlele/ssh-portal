@@ -11,12 +11,42 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"sync"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"github.com/creack/pty"
 	"golang.org/x/crypto/ssh"
 )
+
+// DirectTCPIP represents an active direct-tcpip forwarding connection
+type DirectTCPIP struct {
+	ID         string
+	DestAddr   string
+	DestPort   uint32
+	OriginAddr string
+	OriginPort uint32
+	CreatedAt  time.Time
+	Channel    ssh.Channel
+}
+
+var (
+	directTCPIPMu sync.RWMutex
+	directTCPIPs  = make(map[string]*DirectTCPIP)
+)
+
+// GetAllDirectTCPIPs returns all active direct-tcpip forwarding connections
+func GetAllDirectTCPIPs() []*DirectTCPIP {
+	directTCPIPMu.RLock()
+	defer directTCPIPMu.RUnlock()
+
+	result := make([]*DirectTCPIP, 0, len(directTCPIPs))
+	for _, dtcp := range directTCPIPs {
+		result = append(result, dtcp)
+	}
+	return result
+}
 
 func startSSHServer(relayHost string, relayPort int) {
 	// 1) Generate host key (ephemeral; persist if you want TOFU)
@@ -85,14 +115,54 @@ func handleDirectTCPIP(ch ssh.NewChannel) {
 	}
 	channel, reqs, _ := ch.Accept()
 	go discard(reqs)
+
+	// Create and track the direct-tcpip connection
+	dtcp := &DirectTCPIP{
+		ID:         fmt.Sprintf("%d", time.Now().UnixNano()),
+		DestAddr:   msg.DestAddr,
+		DestPort:   msg.DestPort,
+		OriginAddr: msg.OriginAddr,
+		OriginPort: msg.OriginPort,
+		CreatedAt:  time.Now(),
+		Channel:    channel,
+	}
+
+	// Register the connection
+	directTCPIPMu.Lock()
+	directTCPIPs[dtcp.ID] = dtcp
+	directTCPIPMu.Unlock()
+
+	// Log the connection creation
+	log.Printf("[DIRECT-TCPIP] created: id=%s origin=%s:%d -> dest=%s:%d",
+		dtcp.ID, msg.OriginAddr, msg.OriginPort, msg.DestAddr, msg.DestPort)
+
 	dst := net.JoinHostPort(msg.DestAddr, strconv.FormatUint(uint64(msg.DestPort), 10))
 	up, err := net.Dial("tcp", dst)
 	if err != nil {
+		log.Printf("[DIRECT-TCPIP] connection failed: id=%s dest=%s error=%v", dtcp.ID, dst, err)
 		channel.Close()
+		// Remove from registry on failure
+		directTCPIPMu.Lock()
+		delete(directTCPIPs, dtcp.ID)
+		directTCPIPMu.Unlock()
 		return
 	}
+
+	// Start forwarding in both directions
 	go io.Copy(up, channel)
-	go func() { io.Copy(channel, up); channel.Close(); up.Close() }()
+	go func() {
+		io.Copy(channel, up)
+		channel.Close()
+		up.Close()
+
+		// Remove from registry when connection closes
+		directTCPIPMu.Lock()
+		delete(directTCPIPs, dtcp.ID)
+		directTCPIPMu.Unlock()
+
+		log.Printf("[DIRECT-TCPIP] closed: id=%s origin=%s:%d -> dest=%s:%d",
+			dtcp.ID, msg.OriginAddr, msg.OriginPort, msg.DestAddr, msg.DestPort)
+	}()
 }
 
 func discard(reqs <-chan *ssh.Request) {
