@@ -1,7 +1,6 @@
 package relay
 
 import (
-	"bufio"
 	"crypto/rand"
 	"encoding/base32"
 	"encoding/json"
@@ -123,100 +122,62 @@ func tcpServe(addr string) error {
 
 func handleTCP(c net.Conn) {
 	remoteAddr := c.RemoteAddr().String()
-	// read exactly one line like:
-	//   "HELLO receiver rid=<rid>\n"
-	//   "HELLO sender code=<code>\n"
-	_ = c.SetDeadline(time.Now().Add(20 * time.Second))
-	br := bufio.NewReader(c)
-	line, err := br.ReadString('\n')
+
+	// Parse HELLO message
+	msg, err := ParseHelloMessage(c)
 	if err != nil {
-		log.Printf("[TCP] %s -> read error: %v", remoteAddr, err)
+		log.Printf("[TCP] %s -> %v", remoteAddr, err)
 		c.Close()
 		return
 	}
-	_ = c.SetDeadline(time.Time{}) // clear deadline
-	line = strings.TrimSpace(line)
-	log.Printf("[TCP] %s -> received: %s", remoteAddr, line)
-	parts := strings.Split(line, " ")
-	if len(parts) < 3 || parts[0] != "HELLO" {
-		log.Printf("[TCP] %s -> invalid message format, closing", remoteAddr)
-		c.Close()
-		return
-	}
-	side := parts[1]
-	switch side {
+
+	// Dispatch to appropriate handler
+	switch msg.Side {
 	case "receiver":
-		rid := strings.TrimPrefix(kv(parts[2], "rid="), "rid=")
-		log.Printf("[TCP] %s -> receiver connecting with rid=%s", remoteAddr, rid)
-		inv := getByRID(rid)
-		if inv == nil || time.Now().After(inv.ExpiresAt) {
-			log.Printf("[TCP] %s -> ERR: invalid or expired rid=%s", remoteAddr, rid)
-			io.WriteString(c, "ERR no-invite\n")
-			c.Close()
-			return
-		}
-		// attach
-		invMu.Lock()
-		if inv.ReceiverConn != nil {
-			invMu.Unlock()
-			log.Printf("[TCP] %s -> ERR: receiver already attached for rid=%s", remoteAddr, rid)
-			io.WriteString(c, "ERR already-attached\n")
-			c.Close()
-			return
-		}
-		inv.ReceiverConn = c
-		invMu.Unlock()
-		log.Printf("[TCP] %s -> receiver attached successfully: code=%s rid=%s waiting for sender...", remoteAddr, inv.Code, rid)
-		// block until sender pairs or timeout
-		<-time.After(inv.ExpiresAt.Sub(time.Now()))
-		log.Printf("[TCP] %s -> receiver connection timeout/closed", remoteAddr)
-		// if timeout, close conn (cleanup loop will catch)
+		handleReceiverConnection(c, msg.RID)
 	case "sender":
-		code := strings.TrimPrefix(kv(parts[2], "code="), "code=")
-		log.Printf("[TCP] %s -> sender connecting with code=%s", remoteAddr, code)
-		inv := getByCode(code)
-		if inv == nil || time.Now().After(inv.ExpiresAt) || inv.ReceiverConn == nil {
-			log.Printf("[TCP] %s -> ERR: code %s not ready (invalid/expired/no receiver)", remoteAddr, code)
-			io.WriteString(c, "ERR not-ready\n")
-			c.Close()
-			return
-		}
-		// tell sender the authoritative fingerprint before splicing
-		if !inv.sentOK {
-			// Check if bufio.Reader has buffered data we need to preserve
-			// The br was only used to read one line, so we write directly to the connection
-			response := fmt.Sprintf("proto: ssh-relay/1\nOK\nfp=%s\nexp=%d\n\n", inv.ReceiverFP, inv.ExpiresAt.Unix())
-			if _, err := c.Write([]byte(response)); err != nil {
-				log.Printf("[TCP] write error: %v", err)
-				return
-			}
-			inv.sentOK = true
-			log.Printf("[TCP] %s -> sender authenticated: code=%s fp=%s", remoteAddr, code, inv.ReceiverFP)
-		}
-		// splice c <-> inv.ReceiverConn
-		rc := inv.ReceiverConn
-		rcAddr := rc.RemoteAddr().String()
-		// remove from maps to make it one-shot
-		invMu.Lock()
-		delete(invByID, inv.RID)
-		delete(invByCd, inv.Code)
-		invMu.Unlock()
-		log.Printf("[PAIR] successfully paired: sender=%s receiver=%s code=%s rid=%s", remoteAddr, rcAddr, inv.Code, inv.RID)
-		log.Printf("[SPLICE] bridging sender=%s <-> receiver=%s", remoteAddr, rcAddr)
-		splice(rc, c) // closes both
-		log.Printf("[SPLICE] connection closed: sender=%s receiver=%s", remoteAddr, rcAddr)
+		handleSenderConnection(c, msg.Code)
 	default:
-		log.Printf("[TCP] %s -> ERR: unknown side '%s'", remoteAddr, side)
-		io.WriteString(c, "ERR bad-side\n")
+		log.Printf("[TCP] %s -> ERR: unknown side '%s'", remoteAddr, msg.Side)
+		SendErrorResponse(c, "bad-side")
 		c.Close()
 	}
 }
 
-func kv(s, prefix string) string {
-	if strings.HasPrefix(s, prefix) {
-		return s
+// handleReceiverConnection processes a receiver connection and waits for pairing
+func handleReceiverConnection(c net.Conn, rid string) {
+	inv := HandleReceiver(c, rid)
+	if inv == nil {
+		// Error already handled and connection closed by HandleReceiver
+		return
 	}
-	return ""
+	// Connection is now attached to invite and waiting for sender
+	// Timeout is handled by goroutine in HandleReceiver
+}
+
+// handleSenderConnection processes a sender connection and pairs with receiver
+func handleSenderConnection(c net.Conn, code string) {
+	inv := HandleSender(c, code)
+	if inv == nil {
+		// Error already handled and connection closed by HandleSender
+		return
+	}
+
+	// Pair sender with receiver and splice connections
+	rc := inv.ReceiverConn
+	rcAddr := rc.RemoteAddr().String()
+	senderAddr := c.RemoteAddr().String()
+
+	// Remove from maps to make it one-shot
+	invMu.Lock()
+	delete(invByID, inv.RID)
+	delete(invByCd, inv.Code)
+	invMu.Unlock()
+
+	log.Printf("[PAIR] successfully paired: sender=%s receiver=%s code=%s rid=%s", senderAddr, rcAddr, inv.Code, inv.RID)
+	log.Printf("[SPLICE] bridging sender=%s <-> receiver=%s", senderAddr, rcAddr)
+	splice(rc, c) // closes both connections
+	log.Printf("[SPLICE] connection closed: sender=%s receiver=%s", senderAddr, rcAddr)
 }
 
 func splice(a, b net.Conn) {

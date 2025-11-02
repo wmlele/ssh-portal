@@ -1,16 +1,13 @@
 package receiver
 
 import (
-	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/binary"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net"
-	"net/http"
 	"os"
 	"os/exec"
 	"syscall"
@@ -20,89 +17,81 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-const (
-	relayHTTP = "http://127.0.0.1:8080/mint" // adjust
-	relayTCP  = "127.0.0.1:4430"             // adjust
-)
-
-type mintResp struct {
-	Code string `json:"code"`
-	RID  string `json:"rid"`
-	Exp  string `json:"exp"`
-}
-
 func startSSHServer() {
-	// 1) host key (ephemeral; persist if you want TOFU)
-	_, priv, _ := ed25519.GenerateKey(rand.Reader)
-	signer, _ := ssh.NewSignerFromSigner(priv)
+	// 1) Generate host key (ephemeral; persist if you want TOFU)
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		log.Fatalf("failed to generate host key: %v", err)
+	}
+	signer, err := ssh.NewSignerFromSigner(priv)
+	if err != nil {
+		log.Fatalf("failed to create signer: %v", err)
+	}
 	fp := ssh.FingerprintSHA256(signer.PublicKey())
 
-	// 2) mint code
-	body, _ := json.Marshal(map[string]any{"receiver_fp": fp})
-	resp, err := http.Post(relayHTTP, "application/json", bytes.NewReader(body))
+	// 2) Connect to relay and perform protocol handshake
+	connResult, mintResp, err := ConnectToRelay(fp)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("failed to connect to relay: %v", err)
 	}
-	var m mintResp
-	if err := json.NewDecoder(resp.Body).Decode(&m); err != nil {
-		log.Fatal(err)
-	}
-	_ = resp.Body.Close()
-	fmt.Println("Code:", m.Code)
-	fmt.Println("RID :", m.RID)
+	defer connResult.Conn.Close()
+
+	fmt.Println("Code:", mintResp.Code)
+	fmt.Println("RID :", mintResp.RID)
 	fmt.Println("FP  :", fp)
 
-	// 3) outbound to relay + HELLO
-	conn, err := net.Dial("tcp", relayTCP)
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Fprintf(conn, "HELLO receiver rid=%s\n", m.RID)
-
-	// 4) SSH server over that socket
+	// 3) Setup SSH server over the connection
 	cfg := &ssh.ServerConfig{
 		NoClientAuth: true, // relay already authorized the pairing; you can add more auth here if desired
 	}
 	cfg.AddHostKey(signer)
 
-	sshConn, chans, reqs, err := ssh.NewServerConn(conn, cfg)
+	sshConn, chans, reqs, err := ssh.NewServerConn(connResult.Conn, cfg)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("SSH server connection failed: %v", err)
 	}
 	defer sshConn.Close()
-	go handleGlobal(reqs, sshConn) // remote-forward control (no-op for now)
+
+	// Handle global requests (remote-forward control)
+	go handleGlobal(reqs, sshConn)
+
+	// Handle channels
 	for ch := range chans {
 		switch ch.ChannelType() {
 		case "session":
 			channel, reqs, _ := ch.Accept()
 			go handleSession(channel, reqs)
 		case "direct-tcpip":
-			// client requests we dial a target and bridge
-			payload := ch.ExtraData()
-			var msg struct {
-				DestAddr   string
-				DestPort   uint32
-				OriginAddr string
-				OriginPort uint32
-			}
-			if err := ssh.Unmarshal(payload, &msg); err != nil {
-				ch.Reject(ssh.ConnectionFailed, "bad payload")
-				continue
-			}
-			channel, reqs, _ := ch.Accept()
-			go discard(reqs)
-			dst := fmt.Sprintf("%s:%d", msg.DestAddr, msg.DestPort)
-			up, err := net.Dial("tcp", dst)
-			if err != nil {
-				channel.Close()
-				continue
-			}
-			go io.Copy(up, channel)
-			go func() { io.Copy(channel, up); channel.Close(); up.Close() }()
+			handleDirectTCPIP(ch)
 		default:
 			ch.Reject(ssh.UnknownChannelType, "unsupported")
 		}
 	}
+}
+
+// handleDirectTCPIP handles direct-tcpip channel requests (port forwarding)
+func handleDirectTCPIP(ch ssh.NewChannel) {
+	payload := ch.ExtraData()
+	var msg struct {
+		DestAddr   string
+		DestPort   uint32
+		OriginAddr string
+		OriginPort uint32
+	}
+	if err := ssh.Unmarshal(payload, &msg); err != nil {
+		ch.Reject(ssh.ConnectionFailed, "bad payload")
+		return
+	}
+	channel, reqs, _ := ch.Accept()
+	go discard(reqs)
+	dst := fmt.Sprintf("%s:%d", msg.DestAddr, msg.DestPort)
+	up, err := net.Dial("tcp", dst)
+	if err != nil {
+		channel.Close()
+		return
+	}
+	go io.Copy(up, channel)
+	go func() { io.Copy(channel, up); channel.Close(); up.Close() }()
 }
 
 func discard(reqs <-chan *ssh.Request) {
