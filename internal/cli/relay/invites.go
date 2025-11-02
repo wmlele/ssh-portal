@@ -22,25 +22,99 @@ type Invite struct {
 	ExpiresAt    time.Time
 	ReceiverConn net.Conn
 	sentOK       bool
+	CreatedAt    time.Time
+}
+
+// Splice represents an established connection between sender and receiver
+type Splice struct {
+	ID           string
+	Code         string
+	RID          string
+	ReceiverFP   string
+	SenderAddr   string
+	ReceiverAddr string
+	CreatedAt    time.Time
+	BytesUp      int64 // bytes from receiver to sender
+	BytesDown    int64 // bytes from sender to receiver
+	ClosedAt     *time.Time
+}
+
+// Event callbacks
+type EventCallbacks struct {
+	OnNewInvite    func(*Invite)
+	OnClosedInvite func(*Invite, string) // invite, reason
+	OnNewSplice    func(*Splice)
+	OnClosedSplice func(*Splice)
 }
 
 var (
-	invMu   sync.Mutex
+	invMu   sync.RWMutex
 	invByID = map[string]*Invite{}
 	invByCd = map[string]*Invite{}
+
+	spliceMu sync.RWMutex
+	splices  = map[string]*Splice{}
+
+	callbacks *EventCallbacks
 )
+
+// SetEventCallbacks sets the event callbacks for relay events
+func SetEventCallbacks(cb *EventCallbacks) {
+	callbacks = cb
+}
+
+// GetOutstandingInvites returns all outstanding (not expired) invites
+func GetOutstandingInvites() []*Invite {
+	invMu.RLock()
+	defer invMu.RUnlock()
+
+	now := time.Now()
+	result := make([]*Invite, 0, len(invByID))
+	for _, inv := range invByID {
+		if now.Before(inv.ExpiresAt) {
+			result = append(result, inv)
+		}
+	}
+	return result
+}
+
+// GetEstablishedSplices returns all established splices (active and closed)
+func GetEstablishedSplices() []*Splice {
+	spliceMu.RLock()
+	defer spliceMu.RUnlock()
+
+	result := make([]*Splice, 0, len(splices))
+	for _, s := range splices {
+		result = append(result, s)
+	}
+	return result
+}
+
+// GetActiveSplices returns only active (not closed) splices
+func GetActiveSplices() []*Splice {
+	spliceMu.RLock()
+	defer spliceMu.RUnlock()
+
+	result := make([]*Splice, 0)
+	for _, s := range splices {
+		if s.ClosedAt == nil {
+			result = append(result, s)
+		}
+	}
+	return result
+}
 
 // GetByRID retrieves an invite by rendezvous ID
 func GetByRID(rid string) *Invite {
-	invMu.Lock()
-	defer invMu.Unlock()
+	invMu.RLock()
+	defer invMu.RUnlock()
 	return invByID[rid]
 }
 
 // GetByCode retrieves an invite by code
 func GetByCode(code string) *Invite {
-	invMu.Lock()
-	defer invMu.Unlock()
+	invMu.RLock()
+	defer invMu.RUnlock()
 	return invByCd[code]
 }
 
@@ -49,20 +123,39 @@ func MintInvite(receiverFP string, ttl time.Duration) *Invite {
 	rid := randB32(16)               // rendezvous id (base32)
 	code := fmtCode()                // human code
 	exp := time.Now().Add(ttl).UTC() // expiry
-	inv := &Invite{RID: rid, Code: code, ReceiverFP: receiverFP, ExpiresAt: exp}
+	now := time.Now().UTC()
+	inv := &Invite{
+		RID:        rid,
+		Code:       code,
+		ReceiverFP: receiverFP,
+		ExpiresAt:  exp,
+		CreatedAt:  now,
+	}
 	invMu.Lock()
 	invByID[rid] = inv
 	invByCd[code] = inv
 	invMu.Unlock()
+
+	// Call callback if set
+	if callbacks != nil && callbacks.OnNewInvite != nil {
+		callbacks.OnNewInvite(inv)
+	}
+
 	return inv
 }
 
 // DeleteInvite removes an invite from both maps
-func DeleteInvite(inv *Invite) {
+// reason should be provided for logging/tracking purposes
+func DeleteInvite(inv *Invite, reason string) {
 	invMu.Lock()
 	delete(invByID, inv.RID)
 	delete(invByCd, inv.Code)
 	invMu.Unlock()
+
+	// Call callback if set
+	if callbacks != nil && callbacks.OnClosedInvite != nil {
+		callbacks.OnClosedInvite(inv, reason)
+	}
 }
 
 // LockInvites locks the invite mutex (for external access)
@@ -85,19 +178,23 @@ func cleanupLoop() {
 	for range t.C {
 		now := time.Now()
 		invMu.Lock()
-		cleaned := 0
-		for k, v := range invByID {
+		var toCleanup []*Invite
+		for _, v := range invByID {
 			if now.After(v.ExpiresAt) {
-				delete(invByID, k)
-				delete(invByCd, v.Code)
-				if v.ReceiverConn != nil {
-					log.Printf("[CLEANUP] closing expired connection: code=%s rid=%s", v.Code, v.RID)
-					v.ReceiverConn.Close()
-				}
-				cleaned++
+				toCleanup = append(toCleanup, v)
 			}
 		}
 		invMu.Unlock()
+
+		cleaned := 0
+		for _, v := range toCleanup {
+			if v.ReceiverConn != nil {
+				log.Printf("[CLEANUP] closing expired connection: code=%s rid=%s", v.Code, v.RID)
+				v.ReceiverConn.Close()
+			}
+			DeleteInvite(v, "expired")
+			cleaned++
+		}
 		if cleaned > 0 {
 			log.Printf("[CLEANUP] removed %d expired invite(s)", cleaned)
 		}
@@ -169,4 +266,3 @@ func randN(n int) int {
 	v, _ := rand.Int(rand.Reader, big.NewInt(int64(n)))
 	return int(v.Int64())
 }
-

@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"time"
 )
 
 // ====== TCP rendezvous/splice ======
@@ -78,35 +79,77 @@ func handleSenderConnection(c net.Conn, code string, br *bufio.Reader) {
 	senderAddr := c.RemoteAddr().String()
 
 	// Remove from maps to make it one-shot
-	DeleteInvite(inv)
+	DeleteInvite(inv, "paired")
 
 	log.Printf("[PAIR] successfully paired: sender=%s receiver=%s code=%s rid=%s", senderAddr, rcAddr, inv.Code, inv.RID)
+	
+	// Create splice record
+	spliceID := fmt.Sprintf("%d", time.Now().UnixNano())
+	splice := &Splice{
+		ID:           spliceID,
+		Code:         inv.Code,
+		RID:          inv.RID,
+		ReceiverFP:   inv.ReceiverFP,
+		SenderAddr:   senderAddr,
+		ReceiverAddr: rcAddr,
+		CreatedAt:    time.Now(),
+	}
+	
+	// Register splice
+	spliceMu.Lock()
+	splices[spliceID] = splice
+	spliceMu.Unlock()
+	
+	// Call callback for new splice
+	if callbacks != nil && callbacks.OnNewSplice != nil {
+		callbacks.OnNewSplice(splice)
+	}
+	
 	log.Printf("[SPLICE] bridging sender=%s <-> receiver=%s", senderAddr, rcAddr)
-	splice(rc, c) // closes both connections; rc is bufferedConn preserving SSH banner
+	spliceConnections(rc, c, splice) // closes both connections; rc is bufferedConn preserving SSH banner
 	log.Printf("[SPLICE] connection closed: sender=%s receiver=%s", senderAddr, rcAddr)
 }
 
-func splice(a, b net.Conn) {
-	defer a.Close()
-	defer b.Close()
+func spliceConnections(receiver, sender net.Conn, splice *Splice) {
+	defer receiver.Close()
+	defer sender.Close()
+	
 	done := make(chan struct{}, 2)
-	var aBytes, bBytes int64
-	aAddr := a.RemoteAddr().String()
-	bAddr := b.RemoteAddr().String()
+	var receiverBytes, senderBytes int64
+	receiverAddr := receiver.RemoteAddr().String()
+	senderAddr := sender.RemoteAddr().String()
+	
+	// receiver -> sender (upstream)
 	go func() {
-		n, _ := io.Copy(a, b)
-		bBytes = n
+		n, _ := io.Copy(sender, receiver)
+		receiverBytes = n
 		done <- struct{}{}
 	}()
+	// sender -> receiver (downstream)
 	go func() {
-		n, _ := io.Copy(b, a)
-		aBytes = n
+		n, _ := io.Copy(receiver, sender)
+		senderBytes = n
 		done <- struct{}{}
 	}()
+	
 	<-done // wait for first direction
 	<-done // wait for second direction
-	log.Printf("[SPLICE] stats: %s <-> %s (%d bytes a->b, %d bytes b->a)",
-		aAddr, bAddr, bBytes, aBytes)
+	
+	// Update splice stats and mark as closed
+	now := time.Now()
+	spliceMu.Lock()
+	splice.BytesUp = receiverBytes   // bytes from receiver to sender
+	splice.BytesDown = senderBytes   // bytes from sender to receiver
+	splice.ClosedAt = &now
+	spliceMu.Unlock()
+	
+	log.Printf("[SPLICE] stats: %s <-> %s (%d bytes receiver->sender, %d bytes sender->receiver)",
+		receiverAddr, senderAddr, receiverBytes, senderBytes)
+	
+	// Call callback for closed splice
+	if callbacks != nil && callbacks.OnClosedSplice != nil {
+		callbacks.OnClosedSplice(splice)
+	}
 }
 
 // Run executes the relay command
