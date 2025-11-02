@@ -183,7 +183,13 @@ func handleTCP(c net.Conn) {
 		}
 		// tell sender the authoritative fingerprint before splicing
 		if !inv.sentOK {
-			fmt.Fprintf(c, "OK fp=%s exp=%d\n", inv.ReceiverFP, inv.ExpiresAt.Unix())
+			// Check if bufio.Reader has buffered data we need to preserve
+			// The br was only used to read one line, so we write directly to the connection
+			response := fmt.Sprintf("proto: ssh-relay/1\nOK\nfp=%s\nexp=%d\n\n", inv.ReceiverFP, inv.ExpiresAt.Unix())
+			if _, err := c.Write([]byte(response)); err != nil {
+				log.Printf("[TCP] write error: %v", err)
+				return
+			}
 			inv.sentOK = true
 			log.Printf("[TCP] %s -> sender authenticated: code=%s fp=%s", remoteAddr, code, inv.ReceiverFP)
 		}
