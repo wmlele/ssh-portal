@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"bufio"
 	"crypto/rand"
 	"encoding/base32"
 	"encoding/json"
@@ -124,7 +125,7 @@ func handleTCP(c net.Conn) {
 	remoteAddr := c.RemoteAddr().String()
 
 	// Parse HELLO message
-	msg, err := ParseHelloMessage(c)
+	msg, br, err := ParseHelloMessage(c)
 	if err != nil {
 		log.Printf("[TCP] %s -> %v", remoteAddr, err)
 		c.Close()
@@ -134,9 +135,9 @@ func handleTCP(c net.Conn) {
 	// Dispatch to appropriate handler
 	switch msg.Side {
 	case "receiver":
-		handleReceiverConnection(c, msg.RID)
+		handleReceiverConnection(c, msg.RID, br)
 	case "sender":
-		handleSenderConnection(c, msg.Code)
+		handleSenderConnection(c, msg.Code, br)
 	default:
 		log.Printf("[TCP] %s -> ERR: unknown side '%s'", remoteAddr, msg.Side)
 		SendErrorResponse(c, "bad-side")
@@ -145,18 +146,20 @@ func handleTCP(c net.Conn) {
 }
 
 // handleReceiverConnection processes a receiver connection and waits for pairing
-func handleReceiverConnection(c net.Conn, rid string) {
-	inv := HandleReceiver(c, rid)
+func handleReceiverConnection(c net.Conn, rid string, br *bufio.Reader) {
+	inv, bufferedC := HandleReceiver(c, rid, br)
 	if inv == nil {
 		// Error already handled and connection closed by HandleReceiver
 		return
 	}
 	// Connection is now attached to invite and waiting for sender
+	// bufferedC is used to preserve any SSH banner data that was buffered
+	_ = bufferedC // stored in inv.ReceiverConn
 	// Timeout is handled by goroutine in HandleReceiver
 }
 
 // handleSenderConnection processes a sender connection and pairs with receiver
-func handleSenderConnection(c net.Conn, code string) {
+func handleSenderConnection(c net.Conn, code string, br *bufio.Reader) {
 	inv := HandleSender(c, code)
 	if inv == nil {
 		// Error already handled and connection closed by HandleSender
@@ -164,6 +167,7 @@ func handleSenderConnection(c net.Conn, code string) {
 	}
 
 	// Pair sender with receiver and splice connections
+	// Note: rc is already a bufferedConn that preserves any SSH banner data
 	rc := inv.ReceiverConn
 	rcAddr := rc.RemoteAddr().String()
 	senderAddr := c.RemoteAddr().String()
@@ -176,7 +180,7 @@ func handleSenderConnection(c net.Conn, code string) {
 
 	log.Printf("[PAIR] successfully paired: sender=%s receiver=%s code=%s rid=%s", senderAddr, rcAddr, inv.Code, inv.RID)
 	log.Printf("[SPLICE] bridging sender=%s <-> receiver=%s", senderAddr, rcAddr)
-	splice(rc, c) // closes both connections
+	splice(rc, c) // closes both connections; rc is bufferedConn preserving SSH banner
 	log.Printf("[SPLICE] connection closed: sender=%s receiver=%s", senderAddr, rcAddr)
 }
 

@@ -11,6 +11,20 @@ import (
 
 // ====== Protocol message parsing ======
 
+// bufferedConn wraps a net.Conn with a bufio.Reader to preserve buffered data
+type bufferedConn struct {
+	net.Conn
+	br *bufio.Reader
+}
+
+func newBufferedConn(c net.Conn, br *bufio.Reader) *bufferedConn {
+	return &bufferedConn{Conn: c, br: br}
+}
+
+func (bc *bufferedConn) Read(p []byte) (int, error) {
+	return bc.br.Read(p)
+}
+
 // HelloMessage represents a parsed HELLO message
 type HelloMessage struct {
 	Side string // "sender" or "receiver"
@@ -19,14 +33,16 @@ type HelloMessage struct {
 }
 
 // ParseHelloMessage parses a HELLO message from the connection
-func ParseHelloMessage(c net.Conn) (*HelloMessage, error) {
+// Returns the parsed message and a buffered reader containing any remaining data
+// The buffered reader must be used for further reads to preserve any data sent after HELLO
+func ParseHelloMessage(c net.Conn) (*HelloMessage, *bufio.Reader, error) {
 	_ = c.SetDeadline(time.Now().Add(20 * time.Second))
 	defer c.SetDeadline(time.Time{}) // clear deadline
 
 	br := bufio.NewReader(c)
 	line, err := br.ReadString('\n')
 	if err != nil {
-		return nil, fmt.Errorf("read error: %w", err)
+		return nil, nil, fmt.Errorf("read error: %w", err)
 	}
 
 	line = strings.TrimSpace(line)
@@ -34,7 +50,7 @@ func ParseHelloMessage(c net.Conn) (*HelloMessage, error) {
 
 	parts := strings.Split(line, " ")
 	if len(parts) < 3 || parts[0] != "HELLO" {
-		return nil, fmt.Errorf("invalid message format")
+		return nil, nil, fmt.Errorf("invalid message format")
 	}
 
 	msg := &HelloMessage{Side: parts[1]}
@@ -45,10 +61,10 @@ func ParseHelloMessage(c net.Conn) (*HelloMessage, error) {
 	case "sender":
 		msg.Code = extractValue(parts[2], "code=")
 	default:
-		return nil, fmt.Errorf("unknown side: %s", msg.Side)
+		return nil, nil, fmt.Errorf("unknown side: %s", msg.Side)
 	}
 
-	return msg, nil
+	return msg, br, nil
 }
 
 func extractValue(s, prefix string) string {
@@ -153,7 +169,8 @@ func SendSuccessResponse(c net.Conn, fp string, exp int64, alg string) error {
 
 // HandleReceiver processes a receiver connection
 // Returns the invite if successfully attached, nil on error
-func HandleReceiver(c net.Conn, rid string) *Invite {
+// The returned connection should be a bufferedConn to preserve any SSH banner data
+func HandleReceiver(c net.Conn, rid string, br *bufio.Reader) (*Invite, net.Conn) {
 	remoteAddr := c.RemoteAddr().String()
 	log.Printf("[TCP] %s -> receiver connecting with rid=%s", remoteAddr, rid)
 
@@ -162,7 +179,7 @@ func HandleReceiver(c net.Conn, rid string) *Invite {
 		log.Printf("[TCP] %s -> ERR: invalid or expired rid=%s", remoteAddr, rid)
 		SendErrorResponse(c, "no-invite")
 		c.Close()
-		return nil
+		return nil, nil
 	}
 
 	// Check if receiver already attached
@@ -172,9 +189,12 @@ func HandleReceiver(c net.Conn, rid string) *Invite {
 		log.Printf("[TCP] %s -> ERR: receiver already attached for rid=%s", remoteAddr, rid)
 		SendErrorResponse(c, "already-attached")
 		c.Close()
-		return nil
+		return nil, nil
 	}
-	inv.ReceiverConn = c
+
+	// Wrap connection with buffered reader to preserve any SSH banner data
+	bufferedC := newBufferedConn(c, br)
+	inv.ReceiverConn = bufferedC
 	invMu.Unlock()
 
 	log.Printf("[TCP] %s -> receiver attached successfully: code=%s rid=%s waiting for sender...", remoteAddr, inv.Code, rid)
@@ -185,7 +205,7 @@ func HandleReceiver(c net.Conn, rid string) *Invite {
 		log.Printf("[TCP] %s -> receiver connection timeout/closed", remoteAddr)
 	}()
 
-	return inv
+	return inv, bufferedC
 }
 
 // ====== Sender protocol handler ======
