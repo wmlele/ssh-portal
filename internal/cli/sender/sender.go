@@ -22,11 +22,20 @@ func startSSHClient(code string) {
 	}
 	defer result.Conn.Close()
 
+	log.Println("SSH connection prepared", result.SSHConn)
+
+	// Note: Don't read from result.Conn directly - it's the same underlying socket
+	// that result.SSHConn uses. The buffered data was already extracted in prepareSSHConnection
+	// and will be shown in debug output from SyncToBannerReader when SSH handshake starts.
+
 	// Establish SSH connection
 	cc, chans, reqs, err := ssh.NewClientConn(result.SSHConn, "paired", result.ClientConfig)
 	if err != nil {
 		log.Fatalf("SSH connection failed: %v", err)
 	}
+
+	log.Println("SSH connection established")
+
 	client := ssh.NewClient(cc, chans, reqs)
 	defer client.Close()
 

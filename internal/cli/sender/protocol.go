@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/textproto"
 	"os"
@@ -98,8 +99,12 @@ func ConnectAndHandshake(relayAddr, code string) (*ConnectionResult, error) {
 		return nil, fmt.Errorf("failed to prepare SSH connection: %w", err)
 	}
 
+	log.Println("SSH connection prepared")
+
 	// 6) Create SSH client config with pinned host key
 	cfg := createSSHConfig(resp.FP)
+
+	log.Println("SSH client config created")
 
 	return &ConnectionResult{
 		Conn:         sock,
