@@ -139,10 +139,28 @@ func UpdateForwardsTable(t table.Model, width, height int) table.Model {
 		rows = append(rows, table.Row{origin, dest})
 	}
 
+	// Preserve current cursor position before updating
+	currentCursor := t.Cursor()
+
+	// Update table
 	t.SetColumns(columns)
 	t.SetRows(rows)
 	t.SetWidth(width)
 	t.SetHeight(height)
+
+	// Restore cursor position, but clamp it to valid range
+	if len(rows) > 0 {
+		if currentCursor >= len(rows) {
+			currentCursor = len(rows) - 1
+		}
+		if currentCursor < 0 {
+			currentCursor = 0
+		}
+		t.SetCursor(currentCursor)
+	} else {
+		// No rows, reset cursor
+		t.SetCursor(0)
+	}
 
 	return t
 }
@@ -190,10 +208,10 @@ func RenderRightPaneContent(width int, forwardsTable table.Model) string {
 		MarginBottom(1)
 
 	title := titleStyle.Render("Active TCP/IP Forwards")
-	
+
 	forwards := GetAllDirectTCPIPs()
 	info := infoStyle.Render(fmt.Sprintf("Active: %d", len(forwards)))
-	
+
 	tableView := forwardsTable.View()
 	if tableView == "" {
 		tableView = "  No active forwards"

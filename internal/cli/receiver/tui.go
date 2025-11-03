@@ -164,7 +164,16 @@ func (m *receiverTUIModel) updateTopContent() {
 	}
 
 	// Update forwards table with current data
-	m.forwardsTable = UpdateForwardsTable(m.forwardsTable, m.forwardsTable.Width(), m.forwardsTable.Height())
+	// Use viewport width instead of table width to ensure correct sizing
+	tableWidth := m.rightViewport.Width
+	if tableWidth < 20 {
+		tableWidth = 20
+	}
+	tableHeight := m.rightViewport.Height - 4 // Reserve space for title/info
+	if tableHeight < 3 {
+		tableHeight = 3
+	}
+	m.forwardsTable = UpdateForwardsTable(m.forwardsTable, tableWidth, tableHeight)
 
 	// Render left pane: connection info
 	leftContent := RenderLeftPaneContent(m.leftViewport.Width)
