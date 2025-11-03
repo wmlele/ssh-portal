@@ -6,24 +6,14 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+
+	"ssh-portal/internal/cli/tui"
 )
 
 // RenderStateView renders the invites and splices in a two-column layout
 func RenderStateView(width int) string {
 	// Header with software name and colored bar
-	headerStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("62")).
-		Padding(0, 1)
-
-	barStyle := lipgloss.NewStyle().
-		Background(lipgloss.Color("62")).
-		Width(width).
-		Height(1)
-
-	title := headerStyle.Render("SSH Portal - Relay")
-	bar := barStyle.Render(strings.Repeat(" ", width))
-	header := lipgloss.JoinVertical(lipgloss.Left, title, bar)
+	header := tui.RenderTitleBar("Relay", width)
 
 	invites := GetOutstandingInvites()
 	splices := GetActiveSplices()

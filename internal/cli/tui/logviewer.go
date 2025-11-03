@@ -11,6 +11,25 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// RenderTitleBar renders a two-line header with software name and colored bar
+// moduleName is the module name (e.g., "Receiver", "Relay")
+// width is the width of the header
+func RenderTitleBar(moduleName string, width int) string {
+	headerStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("62")).
+		Padding(0, 1)
+
+	barStyle := lipgloss.NewStyle().
+		Background(lipgloss.Color("62")).
+		Width(width).
+		Height(1)
+
+	title := headerStyle.Render(fmt.Sprintf("SSH Portal - %s", moduleName))
+	bar := barStyle.Render(strings.Repeat(" ", width))
+	return lipgloss.JoinVertical(lipgloss.Left, title, bar)
+}
+
 const (
 	DefaultMaxLogLines = 500 // Default number of log lines to keep in memory
 )
