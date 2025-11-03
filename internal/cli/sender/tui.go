@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -21,6 +22,7 @@ const (
 
 // TUI model for sender
 type senderTUIModel struct {
+	portsTable    table.Model
 	leftViewport  viewport.Model
 	rightViewport viewport.Model
 	logViewer     *tui.LogViewer
@@ -80,13 +82,21 @@ func (m *senderTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		leftWidth := (availableWidth * leftSectionWidth) / 100
 		rightWidth := availableWidth - leftWidth - 1 // -1 for divider
 
+		// Reserve some height for header/info in left pane, rest for table
+		tableHeight := topHeight - 4 // Reserve ~4 lines for title and info
+		if tableHeight < 3 {
+			tableHeight = 3
+		}
+
 		if !m.ready {
+			m.portsTable = NewPortsTable(leftWidth, tableHeight)
 			m.leftViewport = viewport.New(leftWidth, topHeight)
 			m.rightViewport = viewport.New(rightWidth, topHeight)
 			m.width = msg.Width
 			m.height = msg.Height
 			m.ready = true
 		} else {
+			m.portsTable = UpdatePortsTable(m.portsTable, leftWidth, tableHeight)
 			m.leftViewport.Width = leftWidth
 			m.leftViewport.Height = topHeight
 			m.rightViewport.Width = rightWidth
@@ -99,8 +109,12 @@ func (m *senderTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Update log viewer size
 		m.logViewer.SetSize(msg.Width, bottomHeight)
 
-		// Handle viewport updates
-		var leftCmd, rightCmd tea.Cmd
+		// Handle table and viewport updates
+		var tableCmd, leftCmd, rightCmd tea.Cmd
+		m.portsTable, tableCmd = m.portsTable.Update(msg)
+		if tableCmd != nil {
+			cmds = append(cmds, tableCmd)
+		}
 		m.leftViewport, leftCmd = m.leftViewport.Update(msg)
 		if leftCmd != nil {
 			cmds = append(cmds, leftCmd)
@@ -117,9 +131,13 @@ func (m *senderTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		})
 
 	default:
-		// Handle viewport updates
+		// Handle table and viewport updates
 		if m.ready {
-			var leftCmd, rightCmd tea.Cmd
+			var tableCmd, leftCmd, rightCmd tea.Cmd
+			m.portsTable, tableCmd = m.portsTable.Update(msg)
+			if tableCmd != nil {
+				cmds = append(cmds, tableCmd)
+			}
 			m.leftViewport, leftCmd = m.leftViewport.Update(msg)
 			if leftCmd != nil {
 				cmds = append(cmds, leftCmd)
@@ -145,8 +163,11 @@ func (m *senderTUIModel) updateTopContent() {
 		return
 	}
 
-	// Render left side: port forwards list
-	leftContent := RenderPortForwardsList(m.leftViewport.Width)
+	// Update ports table with current data
+	m.portsTable = UpdatePortsTable(m.portsTable, m.portsTable.Width(), m.portsTable.Height())
+
+	// Render left pane: header + table
+	leftContent := RenderLeftPaneContent(m.leftViewport.Width, m.portsTable)
 	m.leftViewport.SetContent(leftContent)
 
 	// Render right side: current state information
@@ -166,7 +187,7 @@ func (m *senderTUIModel) View() string {
 	// Header spans full width
 	header := tui.RenderTitleBar("Sender", m.width-2)
 
-	// Left and right viewports
+	// Get left and right viewport content
 	leftContent := m.leftViewport.View()
 	rightContent := m.rightViewport.View()
 
@@ -177,6 +198,18 @@ func (m *senderTUIModel) View() string {
 	// Split content into lines and join with divider
 	leftLines := strings.Split(leftContent, "\n")
 	rightLines := strings.Split(rightContent, "\n")
+
+	// Determine the actual width of the left pane (use first non-empty line)
+	leftWidth := 0
+	for _, line := range leftLines {
+		if line != "" {
+			leftWidth = lipgloss.Width(line)
+			break
+		}
+	}
+	if leftWidth == 0 {
+		leftWidth = m.leftViewport.Width
+	}
 
 	// Ensure both have the same number of lines
 	maxLines := len(leftLines)
@@ -195,11 +228,11 @@ func (m *senderTUIModel) View() string {
 			rightLine = rightLines[i]
 		}
 
-		// Pad left line to its viewport width, then add divider, then right line
+		// Pad left line to viewport width, then add divider, then right line
 		// Calculate actual display width (accounting for ANSI codes)
 		leftDisplayWidth := lipgloss.Width(leftLine)
-		if leftDisplayWidth < m.leftViewport.Width {
-			leftLine += strings.Repeat(" ", m.leftViewport.Width-leftDisplayWidth)
+		if leftWidth > 0 && leftDisplayWidth < leftWidth {
+			leftLine += strings.Repeat(" ", leftWidth-leftDisplayWidth)
 		}
 
 		divider := dividerStyle.Render("│")

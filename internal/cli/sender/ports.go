@@ -2,10 +2,10 @@ package sender
 
 import (
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
+	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -57,53 +57,120 @@ func GetAllPortForwards() []*PortForward {
 	return result
 }
 
-// RenderPortForwardsList renders the list of port forwards for the left side
-func RenderPortForwardsList(width int) string {
-	forwards := GetAllPortForwards()
+// NewPortsTable creates and returns a table.Model configured for port forwards
+func NewPortsTable(width, height int) table.Model {
+	// Calculate column widths - leave some space for borders/padding
+	// Table needs at least 4 chars per column, so ensure minimum width
+	if width < 20 {
+		width = 20
+	}
+	availableWidth := width - 4 // Account for borders
+	columnWidth := availableWidth / 2
+	if columnWidth < 4 {
+		columnWidth = 4
+	}
 
+	columns := []table.Column{
+		{Title: "Local", Width: columnWidth},
+		{Title: "Remote", Width: columnWidth},
+	}
+
+	rows := []table.Row{}
+	forwards := GetAllPortForwards()
+	for _, pf := range forwards {
+		rows = append(rows, table.Row{pf.Listen, pf.Target})
+	}
+
+	t := table.New(
+		table.WithColumns(columns),
+		table.WithRows(rows),
+		table.WithFocused(true),
+		table.WithHeight(height),
+		table.WithWidth(width),
+	)
+
+	// Configure styles
+	s := table.DefaultStyles()
+	s.Header = s.Header.
+		BorderStyle(lipgloss.NormalBorder()).
+		BorderForeground(lipgloss.Color("240")).
+		BorderBottom(true).
+		Bold(true).
+		Foreground(lipgloss.Color("62"))
+	s.Selected = s.Selected.
+		Foreground(lipgloss.Color("230")).
+		Background(lipgloss.Color("62")).
+		Bold(false)
+	t.SetStyles(s)
+
+	return t
+}
+
+// UpdatePortsTable updates the table with current port forwards data
+func UpdatePortsTable(t table.Model, width, height int) table.Model {
+	// Calculate column widths - ensure minimum size
+	if width < 20 {
+		width = 20
+	}
+	if height < 3 {
+		height = 3
+	}
+	availableWidth := width - 4 // Account for borders
+	columnWidth := availableWidth / 2
+	if columnWidth < 4 {
+		columnWidth = 4
+	}
+
+	columns := []table.Column{
+		{Title: "Local", Width: columnWidth},
+		{Title: "Remote", Width: columnWidth},
+	}
+
+	rows := []table.Row{}
+	forwards := GetAllPortForwards()
+	for _, pf := range forwards {
+		rows = append(rows, table.Row{pf.Listen, pf.Target})
+	}
+
+	// Update table while preserving focus state and cursor position
+	t.SetColumns(columns)
+	t.SetRows(rows)
+	t.SetWidth(width)
+	t.SetHeight(height)
+
+	return t
+}
+
+// RenderLeftPaneContent renders the complete left pane content including header and table
+func RenderLeftPaneContent(width int, portsTable table.Model) string {
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color("62")).
 		MarginBottom(1)
 
+	infoStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("240")).
+		MarginBottom(1)
+
 	title := titleStyle.Render("Port Forwards")
 
-	if len(forwards) == 0 {
-		return title + "\n\nNo port forwards configured"
+	// Get port forward statistics
+	forwards := GetAllPortForwards()
+	info := infoStyle.Render(fmt.Sprintf("Configured: %d", len(forwards)))
+
+	// Get table view
+	tableView := portsTable.View()
+	if tableView == "" {
+		tableView = "  No port forwards configured"
 	}
 
-	// Table header
-	headerStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("240")).
-		Padding(0, 1)
+	// Combine all parts
+	content := lipgloss.JoinVertical(
+		lipgloss.Left,
+		title,
+		info,
+		tableView,
+	)
 
-	header := headerStyle.Render("Local              Remote")
-	divider := strings.Repeat("─", width-4)
-
-	var rows []string
-	rows = append(rows, title)
-	rows = append(rows, header)
-	rows = append(rows, divider)
-
-	rowStyle := lipgloss.NewStyle().Padding(0, 1)
-	for _, pf := range forwards {
-		listen := pf.Listen
-		target := pf.Target
-
-		// Truncate if too long
-		if len(listen) > 18 {
-			listen = listen[:18]
-		}
-		if len(target) > 18 {
-			target = target[:18]
-		}
-
-		row := fmt.Sprintf("%-18s %-18s", listen, target)
-		rows = append(rows, rowStyle.Render(row))
-	}
-
-	content := strings.Join(rows, "\n")
 	return content
 }
-
