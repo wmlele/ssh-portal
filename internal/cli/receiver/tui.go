@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -26,6 +27,7 @@ type receiverTUIModel struct {
 	leftViewport  viewport.Model
 	rightViewport viewport.Model
 	logViewer     *tui.LogViewer
+	spinner       spinner.Model
 	cancel        context.CancelFunc
 	width         int
 	height        int
@@ -33,17 +35,23 @@ type receiverTUIModel struct {
 }
 
 func newReceiverTUIModel(logWriter *tui.LogTailWriter, cancel context.CancelFunc) *receiverTUIModel {
+	sp := spinner.New()
+	sp.Spinner = spinner.Dot
+	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("62"))
+
 	return &receiverTUIModel{
 		logViewer: tui.NewLogViewer(logWriter),
+		spinner:   sp,
 		cancel:    cancel,
 	}
 }
 
 func (m *receiverTUIModel) Init() tea.Cmd {
-	// Initialize log viewer and start ticker for updating top content
+	// Initialize log viewer, spinner, and start ticker for updating top content
 	return tea.Batch(
 		m.logViewer.Init(),
-		tea.Tick(time.Millisecond*500, func(time.Time) tea.Msg {
+		m.spinner.Tick,
+		tea.Tick(time.Millisecond*100, func(time.Time) tea.Msg {
 			return updateTopContentMsg{}
 		}),
 	)
@@ -126,11 +134,18 @@ func (m *receiverTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case updateTopContentMsg:
 		m.updateTopContent()
-		return m, tea.Tick(time.Millisecond*500, func(time.Time) tea.Msg {
+		return m, tea.Tick(time.Millisecond*100, func(time.Time) tea.Msg {
 			return updateTopContentMsg{}
 		})
 
 	default:
+		// Handle spinner updates
+		var spinnerCmd tea.Cmd
+		m.spinner, spinnerCmd = m.spinner.Update(msg)
+		if spinnerCmd != nil {
+			cmds = append(cmds, spinnerCmd)
+		}
+
 		// Handle table and viewport updates
 		if m.ready {
 			var tableCmd, leftCmd, rightCmd tea.Cmd
@@ -176,7 +191,7 @@ func (m *receiverTUIModel) updateTopContent() {
 	m.forwardsTable = UpdateForwardsTable(m.forwardsTable, tableWidth, tableHeight)
 
 	// Render left pane: connection info
-	leftContent := RenderLeftPaneContent(m.leftViewport.Width)
+	leftContent := RenderLeftPaneContent(m.leftViewport.Width, m.spinner)
 	m.leftViewport.SetContent(leftContent)
 
 	// Render right pane: forwards table

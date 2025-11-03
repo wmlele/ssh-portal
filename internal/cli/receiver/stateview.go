@@ -4,19 +4,21 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/lipgloss"
 )
 
 // ReceiverState holds the current receiver state
 type ReceiverState struct {
-	mu          sync.RWMutex
-	UserCode    string // User-friendly code (generated from RelayCode + LocalSecret)
-	RelayCode   string // Code from relay
-	LocalSecret string // Locally generated secret (not displayed)
-	RID         string
-	FP          string
-	Error       string
+	mu             sync.RWMutex
+	UserCode       string // User-friendly code (generated from RelayCode + LocalSecret)
+	RelayCode      string // Code from relay
+	LocalSecret    string // Locally generated secret (not displayed)
+	RID            string
+	FP             string
+	SSHEstablished bool // Whether SSH connection is established
+	Error          string
 }
 
 var currentState = &ReceiverState{}
@@ -26,12 +28,13 @@ func GetState() *ReceiverState {
 	currentState.mu.RLock()
 	defer currentState.mu.RUnlock()
 	return &ReceiverState{
-		UserCode:    currentState.UserCode,
-		RelayCode:   currentState.RelayCode,
-		LocalSecret: currentState.LocalSecret,
-		RID:         currentState.RID,
-		FP:          currentState.FP,
-		Error:       currentState.Error,
+		UserCode:       currentState.UserCode,
+		RelayCode:      currentState.RelayCode,
+		LocalSecret:    currentState.LocalSecret,
+		RID:            currentState.RID,
+		FP:             currentState.FP,
+		SSHEstablished: currentState.SSHEstablished,
+		Error:          currentState.Error,
 	}
 }
 
@@ -50,7 +53,15 @@ func SetState(userCode, relayCode, localSecret, rid, fp string) {
 	currentState.LocalSecret = localSecret
 	currentState.RID = rid
 	currentState.FP = fp
-	currentState.Error = "" // Clear error on successful connection
+	currentState.SSHEstablished = false // SSH not established yet
+	currentState.Error = ""             // Clear error on successful connection
+}
+
+// SetSSHEstablished marks the SSH connection as established
+func SetSSHEstablished() {
+	currentState.mu.Lock()
+	defer currentState.mu.Unlock()
+	currentState.SSHEstablished = true
 }
 
 // SetError sets an error message in the state
@@ -178,7 +189,7 @@ func UpdateForwardsTable(t table.Model, width, height int) table.Model {
 }
 
 // RenderLeftPaneContent renders the connection info for the left pane
-func RenderLeftPaneContent(width int) string {
+func RenderLeftPaneContent(width int, sp spinner.Model) string {
 	state := GetState()
 
 	titleStyle := lipgloss.NewStyle().
@@ -186,18 +197,27 @@ func RenderLeftPaneContent(width int) string {
 		Foreground(lipgloss.Color("62")).
 		MarginBottom(1)
 
+	codeStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("220")). // Yellow/gold accent color
+		Bold(true)
+
 	title := titleStyle.Render("Connection Info")
 
 	var content string
 	if state.Error != "" {
 		content = "ERROR: " + state.Error + "\n\nPress 'q' or Ctrl+C to quit"
 	} else if state.UserCode == "" && state.RID == "" && state.FP == "" {
-		content = "Waiting for connection..."
+		spinnerView := sp.View()
+		content = "Waiting for connection...\n\n" + spinnerView
 	} else {
-		content = "Code:      " + state.UserCode + "\n"
+		content = "Code:      " + codeStyle.Render(state.UserCode) + "\n"
 		content += "RelayCode: " + state.RelayCode + "\n"
 		content += "RID:       " + state.RID + "\n"
 		content += "FP:        " + state.FP
+		if !state.SSHEstablished {
+			spinnerView := sp.View()
+			content += "\n\n" + spinnerView + " Waiting for SSH..."
+		}
 	}
 
 	result := lipgloss.JoinVertical(

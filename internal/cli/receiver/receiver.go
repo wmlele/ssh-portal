@@ -129,6 +129,7 @@ func startSSHServer(relayHost string, relayPort int, enableSession bool) error {
 	defer sshConn.Close()
 
 	log.Printf("SSH connection established with sender: %s", sshConn.RemoteAddr())
+	SetSSHEstablished()
 
 	// Handle global requests (remote-forward control)
 	go handleGlobal(reqs, sshConn)
