@@ -1,4 +1,4 @@
-package relay
+package receiver
 
 import (
 	"context"
@@ -15,11 +15,11 @@ import (
 
 const (
 	maxLogLines      = 500 // Keep last 500 lines in memory
-	topSectionHeight = 60  // Percentage of available height for top section (rest goes to logs)
+	topSectionHeight = 50  // Percentage of available height for top section (rest goes to logs)
 )
 
-// TUI model for relay
-type relayTUIModel struct {
+// TUI model for receiver
+type receiverTUIModel struct {
 	topViewport viewport.Model
 	logViewer   *tui.LogViewer
 	cancel      context.CancelFunc
@@ -28,14 +28,14 @@ type relayTUIModel struct {
 	ready       bool
 }
 
-func newRelayTUIModel(logWriter *tui.LogTailWriter, cancel context.CancelFunc) *relayTUIModel {
-	return &relayTUIModel{
+func newReceiverTUIModel(logWriter *tui.LogTailWriter, cancel context.CancelFunc) *receiverTUIModel {
+	return &receiverTUIModel{
 		logViewer: tui.NewLogViewer(logWriter),
 		cancel:    cancel,
 	}
 }
 
-func (m *relayTUIModel) Init() tea.Cmd {
+func (m *receiverTUIModel) Init() tea.Cmd {
 	// Initialize log viewer and start ticker for updating top content
 	return tea.Batch(
 		m.logViewer.Init(),
@@ -47,7 +47,7 @@ func (m *relayTUIModel) Init() tea.Cmd {
 
 type updateTopContentMsg struct{}
 
-func (m *relayTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m *receiverTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
 	switch msg := msg.(type) {
@@ -62,7 +62,7 @@ func (m *relayTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.WindowSizeMsg:
-		// Split the screen: top section for invites/splices, bottom section for logs
+		// Split the screen: top section for state, bottom section for logs
 		borderHeight := 2 // top + bottom border per section
 		borderWidth := 2  // left + right border
 		availableHeight := msg.Height - (borderHeight * 2)
@@ -120,7 +120,7 @@ func (m *relayTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-func (m *relayTUIModel) updateTopContent() {
+func (m *receiverTUIModel) updateTopContent() {
 	if !m.ready {
 		return
 	}
@@ -130,7 +130,7 @@ func (m *relayTUIModel) updateTopContent() {
 	m.topViewport.SetContent(content)
 }
 
-func (m *relayTUIModel) View() string {
+func (m *receiverTUIModel) View() string {
 	if !m.ready {
 		return "\n  Initializing..."
 	}
@@ -161,7 +161,7 @@ func (m *relayTUIModel) View() string {
 }
 
 // startTUI starts the TUI in a goroutine and sets up log capture
-// When the TUI quits, it calls cancel to signal server shutdown
+// When the TUI quits, it calls cancel to signal shutdown
 func startTUI(ctx context.Context, cancel context.CancelFunc) error {
 	originalOutput := log.Writer()
 
@@ -172,7 +172,7 @@ func startTUI(ctx context.Context, cancel context.CancelFunc) error {
 	log.SetOutput(logWriter)
 
 	// Create and start the TUI program
-	model := newRelayTUIModel(logWriter, cancel)
+	model := newReceiverTUIModel(logWriter, cancel)
 	p := tea.NewProgram(model, tea.WithAltScreen())
 
 	// Run TUI in a goroutine
@@ -190,3 +190,4 @@ func startTUI(ctx context.Context, cancel context.CancelFunc) error {
 
 	return nil
 }
+

@@ -1,6 +1,7 @@
 package receiver
 
 import (
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/binary"
@@ -66,6 +67,9 @@ func startSSHServer(relayHost string, relayPort int) {
 		log.Fatalf("failed to connect to relay: %v", err)
 	}
 	defer connResult.Conn.Close()
+
+	// Store state for TUI
+	SetState(mintResp.Code, mintResp.RID, fp)
 
 	fmt.Println("Code:", mintResp.Code)
 	fmt.Println("RID :", mintResp.RID)
@@ -284,7 +288,23 @@ func handleGlobal(reqs <-chan *ssh.Request, _ *ssh.ServerConn) {
 
 // Run executes the receiver command
 func Run(relayHost string, relayPort int, interactive bool) error {
-	fmt.Println("receiver")
-	startSSHServer(relayHost, relayPort)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if interactive {
+		// Start TUI for interactive mode
+		if err := startTUI(ctx, cancel); err != nil {
+			return fmt.Errorf("failed to start TUI: %w", err)
+		}
+	}
+
+	// Start SSH server in a goroutine (it runs indefinitely)
+	go func() {
+		startSSHServer(relayHost, relayPort)
+	}()
+
+	// Wait for shutdown signal
+	<-ctx.Done()
+	log.Printf("receiver shutting down...")
 	return nil
 }
