@@ -87,6 +87,8 @@ func startSSHServer(relayHost string, relayPort int) {
 	}
 	defer sshConn.Close()
 
+	log.Printf("SSH connection established with sender: %s", sshConn.RemoteAddr())
+
 	// Handle global requests (remote-forward control)
 	go handleGlobal(reqs, sshConn)
 
@@ -95,6 +97,7 @@ func startSSHServer(relayHost string, relayPort int) {
 		switch ch.ChannelType() {
 		case "session":
 			channel, reqs, _ := ch.Accept()
+			log.Printf("SSH session channel opened by sender")
 			go handleSession(channel, reqs)
 		case "direct-tcpip":
 			handleDirectTCPIP(ch)

@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 )
@@ -37,6 +38,22 @@ func startSSHClient(relayHost string, relayPort int, code string) {
 
 	client := ssh.NewClient(cc, chans, reqs)
 	defer client.Close()
+
+	// Monitor connection for closure - check if client operations fail
+	go func() {
+		// Monitor by periodically checking connection state
+		// or by detecting when a client operation fails
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			// Try to send a keepalive or check connection
+			_, _, err := client.SendRequest("keepalive@ssh-portal", false, nil)
+			if err != nil {
+				log.Printf("Receiver connection closed: %v", err)
+				return
+			}
+		}
+	}()
 
 	// Start local port forwarding
 	go localForward(client, "127.0.0.1:10022", "127.0.0.1:22")
@@ -72,11 +89,19 @@ func localForward(c *ssh.Client, listen, target string) {
 		go func(lc net.Conn) {
 			rc, err := c.Dial("tcp", target)
 			if err != nil {
+				log.Printf("Failed to dial target (receiver may have closed): %v", err)
 				lc.Close()
 				return
 			}
 			go io.Copy(rc, lc)
-			go func() { io.Copy(lc, rc); lc.Close(); rc.Close() }()
+			go func() {
+				_, err := io.Copy(lc, rc)
+				if err != nil && err != io.EOF {
+					log.Printf("Connection error (receiver may have closed): %v", err)
+				}
+				lc.Close()
+				rc.Close()
+			}()
 		}(lc)
 	}
 }
