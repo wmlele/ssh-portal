@@ -62,6 +62,12 @@ func (m *senderTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		// Always update log viewer first (but don't block on it)
+		logCmd, _ := m.logViewer.Update(msg)
+		if logCmd != nil {
+			cmds = append(cmds, logCmd)
+		}
+
 		// If the form is open, give it first crack at key events
 		if m.showForm && m.portForm != nil {
 			var formCmd tea.Cmd
@@ -243,10 +249,20 @@ func (m *senderTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	default:
+		// Handle log viewer updates first (should always process)
+		logCmd, handled := m.logViewer.Update(msg)
+		if handled && logCmd != nil {
+			cmds = append(cmds, logCmd)
+		}
+
 		// Delegate message to form when it's open
 		if m.showForm && m.portForm != nil {
 			if cmd, handled := m.handleFormMessage(msg); handled {
-				return m, cmd
+				// Even if form handled the message, include any log commands
+				if cmd != nil {
+					return m, tea.Batch(append(cmds, cmd)...)
+				}
+				return m, tea.Batch(cmds...)
 			}
 		}
 
@@ -262,12 +278,6 @@ func (m *senderTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if rightCmd != nil {
 				cmds = append(cmds, rightCmd)
 			}
-		}
-
-		// Handle log viewer updates
-		logCmd, handled := m.logViewer.Update(msg)
-		if handled && logCmd != nil {
-			cmds = append(cmds, logCmd)
 		}
 	}
 

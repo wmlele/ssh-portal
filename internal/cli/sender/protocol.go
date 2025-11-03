@@ -104,8 +104,8 @@ func ConnectAndHandshake(relayAddr, code string) (*ConnectionResult, error) {
 
 	// 6) Create pinned SSH client config
 	cfg := &ssh.ClientConfig{
-		User: "ignored",
-		Auth: []ssh.AuthMethod{ssh.Password("ignored")},
+		User: code,
+		Auth: []ssh.AuthMethod{ssh.Password(code)},
 		HostKeyCallback: func(host string, addr net.Addr, key ssh.PublicKey) error {
 			got := ssh.FingerprintSHA256(key)
 			if got != fp {

@@ -49,7 +49,7 @@ func GetAllDirectTCPIPs() []*DirectTCPIP {
 	return result
 }
 
-func startSSHServer(relayHost string, relayPort int) error {
+func startSSHServer(relayHost string, relayPort int, enableSession bool) error {
 	// 1) Generate host key (ephemeral; persist if you want TOFU)
 	_, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -83,7 +83,14 @@ func startSSHServer(relayHost string, relayPort int) error {
 
 	// 3) Setup SSH server over the connection
 	cfg := &ssh.ServerConfig{
-		NoClientAuth: true, // relay already authorized the pairing; you can add more auth here if desired
+		PasswordCallback: func(c ssh.ConnMetadata, pass []byte) (*ssh.Permissions, error) {
+			expectedUsername := mintResp.Code
+			expectedPassword := mintResp.Code
+			if c.User() != expectedUsername || string(pass) != expectedPassword {
+				return nil, fmt.Errorf("invalid credentials")
+			}
+			return nil, nil
+		},
 	}
 	cfg.AddHostKey(signer)
 
@@ -104,6 +111,11 @@ func startSSHServer(relayHost string, relayPort int) error {
 	for ch := range chans {
 		switch ch.ChannelType() {
 		case "session":
+			if !enableSession {
+				log.Printf("SSH session channel rejected (session handling disabled)")
+				ch.Reject(ssh.Prohibited, "session handling disabled")
+				continue
+			}
 			channel, reqs, _ := ch.Accept()
 			log.Printf("SSH session channel opened by sender")
 			go handleSession(channel, reqs)
@@ -301,7 +313,7 @@ func handleGlobal(reqs <-chan *ssh.Request, _ *ssh.ServerConn) {
 }
 
 // Run executes the receiver command
-func Run(relayHost string, relayPort int, interactive bool) error {
+func Run(relayHost string, relayPort int, interactive bool, session bool) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -314,7 +326,7 @@ func Run(relayHost string, relayPort int, interactive bool) error {
 
 	// Start SSH server in a goroutine (it runs indefinitely or until error)
 	go func() {
-		if err := startSSHServer(relayHost, relayPort); err != nil {
+		if err := startSSHServer(relayHost, relayPort, session); err != nil {
 			// Error already logged and set in state view
 			log.Printf("SSH server failed to start, but keeping receiver running for manual quit")
 		}
