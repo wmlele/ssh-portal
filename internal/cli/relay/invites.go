@@ -1,18 +1,15 @@
 package relay
 
 import (
-	"context"
-	"crypto/rand"
-	"encoding/base32"
-	"encoding/json"
-	"fmt"
-	"log"
-	"math/big"
-	"net"
-	"net/http"
-	"strings"
-	"sync"
-	"time"
+    "crypto/rand"
+    "encoding/base32"
+    "fmt"
+    "log"
+    "math/big"
+    "net"
+    "strings"
+    "sync"
+    "time"
 )
 
 // Invite represents a connection invitation
@@ -202,59 +199,7 @@ func cleanupLoop() {
 	}
 }
 
-// ====== HTTP: /mint ======
-type mintReq struct {
-	ReceiverFP string `json:"receiver_fp"`
-	TTLSeconds int    `json:"ttl_seconds,omitempty"` // optional; default 600
-}
-type mintResp struct {
-	Code string    `json:"code"`
-	RID  string    `json:"rid"`
-	Exp  time.Time `json:"exp"`
-}
-
-func handleMint(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "POST" {
-		log.Printf("[HTTP] %s %s -> 405 Method Not Allowed", r.Method, r.URL.Path)
-		http.Error(w, "POST only", http.StatusMethodNotAllowed)
-		return
-	}
-	var req mintReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || !strings.HasPrefix(req.ReceiverFP, "SHA256:") {
-		log.Printf("[HTTP] %s %s -> 400 Bad Request (bad json or fp)", r.Method, r.URL.Path)
-		http.Error(w, "bad json or fp", http.StatusBadRequest)
-		return
-	}
-	ttl := 10 * time.Minute
-	if req.TTLSeconds > 0 && req.TTLSeconds <= 3600 {
-		ttl = time.Duration(req.TTLSeconds) * time.Second
-	}
-	inv := MintInvite(req.ReceiverFP, ttl)
-	log.Printf("[MINT] receiver connected: fp=%s code=%s rid=%s expires=%s", req.ReceiverFP, inv.Code, inv.RID, inv.ExpiresAt.Format(time.RFC3339))
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(mintResp{Code: inv.Code, RID: inv.RID, Exp: inv.ExpiresAt})
-}
-
-// StartHTTPServer starts the HTTP server for mint endpoint
-// Returns the http.Server for graceful shutdown
-func StartHTTPServer(ctx context.Context, addr string) *http.Server {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/mint", handleMint)
-	
-	server := &http.Server{
-		Addr:    addr,
-		Handler: mux,
-	}
-
-	log.Printf("relay HTTP on %s (POST /mint)", addr)
-	go func() {
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Printf("HTTP server error: %v", err)
-		}
-	}()
-
-	return server
-}
+// (HTTP mint endpoint removed; mint is now done over TCP JSON)
 
 func randB32(n int) string {
 	b := make([]byte, n)

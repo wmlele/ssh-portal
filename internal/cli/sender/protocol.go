@@ -2,6 +2,7 @@ package sender
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -15,9 +16,7 @@ import (
 
 // --- Tuning / limits ---
 const (
-	maxHeaderBytes = 32 * 1024
-	maxHeaderLines = 200
-	clockSkew      = 30 * time.Second
+	clockSkew = 30 * time.Second
 )
 
 // Set SSH_PORTAL_DEBUG env var to enable debug
@@ -25,11 +24,26 @@ var debugProtocol = os.Getenv("SSH_PORTAL_DEBUG") != ""
 
 // --- Protocol structures ---
 
-type Greeting struct {
-	Proto   string            // must be ssh-relay/1
-	OK      bool              // true if "OK", false if "ERR ..."
-	ErrText string            // optional message after ERR
-	KV      map[string]string // key=value lines (optional)
+// JSONHello is the JSON hello message sent to the relay before SSH starts
+type JSONHello struct {
+	Msg  string `json:"msg"`
+	Role string `json:"role"`
+	Code string `json:"code,omitempty"`
+	RID  string `json:"rid,omitempty"`
+}
+
+// JSONOKResponse is the JSON success response sent back by the relay
+type JSONOKResponse struct {
+	Msg string `json:"msg"`
+	FP  string `json:"fp"`
+	Exp int64  `json:"exp"`
+	Alg string `json:"alg"`
+}
+
+// JSONErrorResponse is the JSON error response sent back by the relay
+type JSONErrorResponse struct {
+	Msg   string `json:"msg"`
+	Error string `json:"error"`
 }
 
 type ConnectionResult struct {
@@ -48,45 +62,61 @@ func ConnectAndHandshake(relayAddr, code string) (*ConnectionResult, error) {
 		return nil, fmt.Errorf("connect relay: %w", err)
 	}
 
-	// 2) Send HELLO
-	if _, err := fmt.Fprintf(sock, "HELLO sender code=%s\n", code); err != nil {
+	// 2) Send version + JSON hello
+	if _, err := fmt.Fprintln(sock, "ssh-relay/1.0"); err != nil {
 		sock.Close()
-		return nil, fmt.Errorf("send HELLO: %w", err)
+		return nil, fmt.Errorf("send version: %w", err)
+	}
+	if err := json.NewEncoder(sock).Encode(JSONHello{Msg: "hello", Role: "sender", Code: code}); err != nil {
+		sock.Close()
+		return nil, fmt.Errorf("send hello: %w", err)
 	}
 
-	// 3) Read strict greeting block (leaves SSH banner buffered)
+	// 3) Read JSON ok, then a blank line; leave SSH banner buffered
 	br := bufio.NewReader(sock)
-	gr, raw, err := readStrictGreeting(br)
-	if debugProtocol && raw != "" {
-		fmt.Fprintf(os.Stderr, "\n=== Relay Greeting ===\n%s=== END ===\n\n", raw)
-	}
+	line, err := br.ReadString('\n')
 	if err != nil {
 		sock.Close()
-		return nil, err
+		return nil, fmt.Errorf("read ok: %w", err)
 	}
-
-	// 4) Validate greeting
-	if gr.Proto != "ssh-relay/1" {
+	if debugProtocol && line != "" {
+		fmt.Fprintf(os.Stderr, "\n=== Relay JSON Response ===\n%s=== END ===\n\n", line)
+	}
+	var ok JSONOKResponse
+	if err := json.Unmarshal([]byte(strings.TrimSpace(line)), &ok); err != nil {
 		sock.Close()
-		return nil, fmt.Errorf("unsupported protocol %q", gr.Proto)
+		return nil, fmt.Errorf("decode response: %w", err)
 	}
-	if !gr.OK {
-		msg := gr.ErrText
-		if msg == "" {
-			msg = "relay reported error"
+	if ok.Msg != "ok" {
+		// Try to decode error response for a better message
+		var er JSONErrorResponse
+		_ = json.Unmarshal([]byte(strings.TrimSpace(line)), &er)
+		sock.Close()
+		if er.Error != "" {
+			return nil, fmt.Errorf("relay error: %s", er.Error)
 		}
-		sock.Close()
-		return nil, fmt.Errorf("relay error: %s", msg)
+		return nil, fmt.Errorf("unexpected response: %s", strings.TrimSpace(line))
 	}
 
-	fp := strings.TrimSpace(gr.KV["fp"])
+	// Expect a single blank line before SSH banner
+	blank, err := br.ReadString('\n')
+	if err != nil {
+		sock.Close()
+		return nil, fmt.Errorf("read blank line: %w", err)
+	}
+	if strings.TrimSpace(blank) != "" {
+		sock.Close()
+		return nil, fmt.Errorf("expected blank line before SSH banner")
+	}
+
+	fp := strings.TrimSpace(ok.FP)
 	if fp == "" {
 		sock.Close()
 		return nil, fmt.Errorf("missing required key: fp")
 	}
 
 	// Optional: exp + alg
-	if expStr := strings.TrimSpace(gr.KV["exp"]); expStr != "" {
+	if expStr := fmt.Sprintf("%d", ok.Exp); expStr != "" {
 		sec, err := strconv.ParseInt(expStr, 10, 64)
 		if err != nil {
 			sock.Close()
@@ -116,12 +146,12 @@ func ConnectAndHandshake(relayAddr, code string) (*ConnectionResult, error) {
 	}
 
 	// Optional: print nice info
-	if alg := strings.TrimSpace(gr.KV["alg"]); alg != "" && gr.KV["exp"] != "" {
-		fmt.Printf("Pinned receiver fp: %s (exp %s, alg %s)\n", fp, gr.KV["exp"], alg)
-	} else if alg != "" {
+	if alg := strings.TrimSpace(ok.Alg); alg != "" && ok.Exp != 0 {
+		fmt.Printf("Pinned receiver fp: %s (exp %d, alg %s)\n", fp, ok.Exp, alg)
+	} else if alg := strings.TrimSpace(ok.Alg); alg != "" {
 		fmt.Printf("Pinned receiver fp: %s (alg %s)\n", fp, alg)
-	} else if gr.KV["exp"] != "" {
-		fmt.Printf("Pinned receiver fp: %s (exp %s)\n", fp, gr.KV["exp"])
+	} else if ok.Exp != 0 {
+		fmt.Printf("Pinned receiver fp: %s (exp %d)\n", fp, ok.Exp)
 	} else {
 		fmt.Println("Pinned receiver fp:", fp)
 	}
@@ -134,112 +164,7 @@ func ConnectAndHandshake(relayAddr, code string) (*ConnectionResult, error) {
 	}, nil
 }
 
-// --- Strict greeting parser ---
-
-// readStrictGreeting parses exactly:
-//
-//	proto: ssh-relay/1
-//	OK | ERR[ <text>]
-//	key=value      (0+ lines; must be '=' form)
-//	<blank line>   (terminator; exactly one)
-//
-// After the blank line, the next byte must be 'S' of "SSH-"; we do not consume it.
-// We return the raw header text for optional debugging.
-func readStrictGreeting(br *bufio.Reader) (Greeting, string, error) {
-	var raw strings.Builder
-	write := func(s string) { raw.WriteString(s); raw.WriteByte('\n') }
-
-	var g Greeting
-	g.KV = make(map[string]string)
-
-	totalBytes := 0
-	lineCount := 0
-
-	readLine := func() (string, error) {
-		s, err := br.ReadString('\n')
-		if err != nil {
-			return "", fmt.Errorf("read line: %w", err)
-		}
-		lineCount++
-		totalBytes += len(s)
-		if totalBytes > maxHeaderBytes || lineCount > maxHeaderLines {
-			return "", fmt.Errorf("greeting too large")
-		}
-
-		// keep raw as-is (including trailing \n)
-		write(strings.TrimRight(s, "\n"))
-		return strings.TrimRight(s, "\r\n"), nil
-	}
-
-	// 1) proto: ssh-relay/1
-	l, err := readLine()
-	if err != nil {
-		return g, raw.String(), err
-	}
-	if !strings.HasPrefix(strings.ToLower(l), "proto:") {
-		return g, raw.String(), fmt.Errorf("expected 'proto:' line, got %q", l)
-	}
-	g.Proto = strings.TrimSpace(strings.TrimPrefix(l, l[:strings.Index(l, ":")+1]))
-	if g.Proto == "" {
-		return g, raw.String(), fmt.Errorf("empty proto")
-	}
-
-	// 2) OK | ERR[ text]
-	l, err = readLine()
-	if err != nil {
-		return g, raw.String(), err
-	}
-	switch {
-	case l == "OK":
-		g.OK = true
-	case strings.HasPrefix(l, "ERR"):
-		g.OK = false
-		g.ErrText = strings.TrimSpace(strings.TrimPrefix(l, "ERR"))
-	default:
-		return g, raw.String(), fmt.Errorf("expected OK or ERR, got %q", l)
-	}
-
-	if !g.OK {
-		// If error, do not parse key=values, just return now.
-		return g, raw.String(), fmt.Errorf("relay error: %s", g.ErrText)
-	}
-
-	// 3) zero or more key=value lines until a single blank line
-	for {
-		peek, _ := br.Peek(1)
-		if len(peek) == 0 {
-			return g, raw.String(), fmt.Errorf("unexpected EOF before banner")
-		}
-		// We need to read the line to both validate and advance to the terminator.
-		l, err = readLine()
-		if err != nil {
-			return g, raw.String(), err
-		}
-
-		if l == "" { // the single, terminating blank line
-			break
-		}
-
-		k, v, ok := strings.Cut(l, "=")
-		if !ok || strings.TrimSpace(k) == "" {
-			return g, raw.String(), fmt.Errorf("invalid header %q (expected key=value)", l)
-		}
-		// Do not trim spaces inside value; keep exactly what server sent after '='
-		g.KV[strings.TrimSpace(k)] = v
-	}
-
-	// 4) Next byte must start the SSH banner, but we don't consume it
-	// (We can cheaply check without advancing.)
-	b, err := br.Peek(4)
-	if err != nil {
-		return g, raw.String(), fmt.Errorf("peek banner: %w", err)
-	}
-	if string(b) != "SSH-" {
-		return g, raw.String(), fmt.Errorf("expected SSH banner after blank line")
-	}
-
-	return g, raw.String(), nil
-}
+// (text protocol reader removed; JSON protocol is now used)
 
 // --- Small adapter to expose buffered bytes first, then the socket ---
 

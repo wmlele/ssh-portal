@@ -1,26 +1,35 @@
 package receiver
 
 import (
-	"bytes"
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"net"
-	"net/http"
 	"strconv"
 )
 
 // --- Protocol structures ---
 
-// MintRequest represents a request to mint a new invite
+// JSONHello is the JSON hello message sent to the relay before SSH starts
+type JSONHello struct {
+	Msg  string `json:"msg"`
+	Role string `json:"role"`
+	Code string `json:"code,omitempty"`
+	RID  string `json:"rid,omitempty"`
+}
+
+// JSON mint message/response over TCP
 type MintRequest struct {
+	Msg        string `json:"msg"` // "mint"
+	Role       string `json:"role"`
 	ReceiverFP string `json:"receiver_fp"`
 }
 
-// MintResponse represents the response from the mint endpoint
 type MintResponse struct {
+	Msg  string `json:"msg"` // "mint_ok"
 	Code string `json:"code"`
 	RID  string `json:"rid"`
-	Exp  string `json:"exp"`
+	Exp  int64  `json:"exp"`
 }
 
 // ConnectionResult holds the result of connecting to the relay
@@ -32,35 +41,7 @@ type ConnectionResult struct {
 
 // --- Protocol communication ---
 
-// MintInvite requests a new invite from the relay using the receiver's fingerprint
-// relayHost is the relay server host
-// relayPort is the TCP port; HTTP will be on port+1
-func MintInvite(relayHost string, relayPort int, receiverFP string) (*MintResponse, error) {
-	httpPort := relayPort + 1
-	relayHTTP := fmt.Sprintf("http://%s/mint", net.JoinHostPort(relayHost, strconv.Itoa(httpPort)))
-
-	body, err := json.Marshal(MintRequest{ReceiverFP: receiverFP})
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal mint request: %w", err)
-	}
-
-	resp, err := http.Post(relayHTTP, "application/json", bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("failed to POST to relay: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("relay returned status %d", resp.StatusCode)
-	}
-
-	var m MintResponse
-	if err := json.NewDecoder(resp.Body).Decode(&m); err != nil {
-		return nil, fmt.Errorf("failed to decode mint response: %w", err)
-	}
-
-	return &m, nil
-}
+// (HTTP mint endpoint removed; mint is performed over TCP JSON)
 
 // ConnectAndHello connects to the relay and sends the HELLO message for a receiver
 func ConnectAndHello(relayAddr, rid string) (*ConnectionResult, error) {
@@ -69,9 +50,14 @@ func ConnectAndHello(relayAddr, rid string) (*ConnectionResult, error) {
 		return nil, fmt.Errorf("failed to connect to relay: %w", err)
 	}
 
-	if _, err := fmt.Fprintf(conn, "HELLO receiver rid=%s\n", rid); err != nil {
+	// Send version + JSON hello
+	if _, err := fmt.Fprintln(conn, "ssh-relay/1.0"); err != nil {
 		conn.Close()
-		return nil, fmt.Errorf("failed to send HELLO: %w", err)
+		return nil, fmt.Errorf("failed to send version: %w", err)
+	}
+	if err := json.NewEncoder(conn).Encode(JSONHello{Msg: "hello", Role: "receiver", RID: rid}); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("failed to send hello: %w", err)
 	}
 
 	return &ConnectionResult{
@@ -87,20 +73,39 @@ func ConnectAndHello(relayAddr, rid string) (*ConnectionResult, error) {
 // relayHost is the relay server host
 // relayPort is the TCP port (HTTP will be on port+1)
 func ConnectToRelay(relayHost string, relayPort int, receiverFP string) (*ConnectionResult, *MintResponse, error) {
-	// 1) Mint invite
-	mintResp, err := MintInvite(relayHost, relayPort, receiverFP)
-	if err != nil {
-		return nil, nil, fmt.Errorf("mint failed: %w", err)
-	}
-
-	// 2) Connect and send HELLO (TCP uses the specified port)
+	// 1) Connect TCP
 	relayTCP := net.JoinHostPort(relayHost, strconv.Itoa(relayPort))
-	connResult, err := ConnectAndHello(relayTCP, mintResp.RID)
+	conn, err := net.Dial("tcp", relayTCP)
 	if err != nil {
-		return nil, nil, fmt.Errorf("connection failed: %w", err)
+		return nil, nil, fmt.Errorf("failed to connect to relay: %w", err)
+	}
+	// 2) Send version + JSON mint
+	if _, err := fmt.Fprintln(conn, "ssh-relay/1.0"); err != nil {
+		conn.Close()
+		return nil, nil, fmt.Errorf("failed to send version: %w", err)
+	}
+	if err := json.NewEncoder(conn).Encode(MintRequest{Msg: "mint", Role: "receiver", ReceiverFP: receiverFP}); err != nil {
+		conn.Close()
+		return nil, nil, fmt.Errorf("failed to send mint: %w", err)
+	}
+	// 3) Read mint_ok response
+	br := bufio.NewReader(conn)
+	line, err := br.ReadString('\n')
+	if err != nil {
+		conn.Close()
+		return nil, nil, fmt.Errorf("failed to read mint response: %w", err)
+	}
+	var m MintResponse
+	if err := json.Unmarshal([]byte(line), &m); err != nil || m.Msg != "mint_ok" {
+		conn.Close()
+		return nil, nil, fmt.Errorf("bad mint response")
 	}
 
-	connResult.Code = mintResp.Code
+	// 4) On same connection, send hello with RID to attach
+	if err := json.NewEncoder(conn).Encode(JSONHello{Msg: "hello", Role: "receiver", RID: m.RID}); err != nil {
+		conn.Close()
+		return nil, nil, fmt.Errorf("failed to send hello: %w", err)
+	}
 
-	return connResult, mintResp, nil
+	return &ConnectionResult{Conn: conn, RID: m.RID, Code: m.Code}, &m, nil
 }

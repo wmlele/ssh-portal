@@ -2,6 +2,7 @@ package relay
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net"
@@ -25,142 +26,111 @@ func (bc *bufferedConn) Read(p []byte) (int, error) {
 	return bc.br.Read(p)
 }
 
-// HelloMessage represents a parsed HELLO message
-type HelloMessage struct {
-	Side string // "sender" or "receiver"
-	Code string // for sender
-	RID  string // for receiver
+// JSON protocol messages
+type EndpointMessage struct {
+	Msg        string `json:"msg"`  // "hello" or "mint"
+	Role       string `json:"role"` // "sender" or "receiver"
+	Code       string `json:"code,omitempty"`
+	RID        string `json:"rid,omitempty"`
+	ReceiverFP string `json:"receiver_fp,omitempty"`
+	TTLSeconds int    `json:"ttl_seconds,omitempty"`
 }
 
-// ParseHelloMessage parses a HELLO message from the connection
-// Returns the parsed message and a buffered reader containing any remaining data
-// The buffered reader must be used for further reads to preserve any data sent after HELLO
-func ParseHelloMessage(c net.Conn) (*HelloMessage, *bufio.Reader, error) {
+type OKResponse struct {
+	Msg string `json:"msg"` // "ok"
+	FP  string `json:"fp,omitempty"`
+	Exp int64  `json:"exp,omitempty"`
+	Alg string `json:"alg,omitempty"`
+}
+
+type ErrorResponse struct {
+	Msg string `json:"msg"` // "error"
+	Err string `json:"error"`
+}
+
+// MintOKResponse is sent back to a receiver after a successful mint
+type MintOKResponse struct {
+	Msg  string `json:"msg"` // "mint_ok"
+	Code string `json:"code"`
+	RID  string `json:"rid"`
+	Exp  int64  `json:"exp"`
+}
+
+// ParseMessage reads the version line and a single JSON payload message.
+// It returns the parsed HelloMessage and a buffered reader preserving any extra bytes.
+func ParseMessage(c net.Conn) (*EndpointMessage, *bufio.Reader, error) {
 	_ = c.SetDeadline(time.Now().Add(20 * time.Second))
 	defer c.SetDeadline(time.Time{}) // clear deadline
 
 	br := bufio.NewReader(c)
-	line, err := br.ReadString('\n')
+
+	// 1) Expect exact version line
+	verLine, err := br.ReadString('\n')
 	if err != nil {
-		return nil, nil, fmt.Errorf("read error: %w", err)
+		return nil, nil, fmt.Errorf("read version: %w", err)
+	}
+	if strings.TrimSpace(verLine) != "ssh-relay/1.0" {
+		return nil, nil, fmt.Errorf("unsupported or missing version line")
 	}
 
-	line = strings.TrimSpace(line)
-	log.Printf("[TCP] %s -> received: %s", c.RemoteAddr(), line)
+	// 2) Read one JSON line
+	jsonLine, err := br.ReadString('\n')
+	if err != nil {
+		return nil, nil, fmt.Errorf("read payload json: %w", err)
+	}
+	jsonLine = strings.TrimSpace(jsonLine)
+	log.Printf("[TCP] %s -> payload json: %s", c.RemoteAddr(), jsonLine)
 
-	parts := strings.Split(line, " ")
-	if len(parts) < 3 || parts[0] != "HELLO" {
-		return nil, nil, fmt.Errorf("invalid message format")
+	var payload EndpointMessage
+	if err := json.Unmarshal([]byte(jsonLine), &payload); err != nil {
+		return nil, nil, fmt.Errorf("decode payload: %w", err)
+	}
+	// validate based on role and message
+	if payload.Role != "sender" && payload.Role != "receiver" {
+		return nil, nil, fmt.Errorf("invalid role %q", payload.Role)
+	}
+	if payload.Msg == "hello" && payload.Role == "sender" && payload.Code == "" {
+		return nil, nil, fmt.Errorf("missing code for sender")
+	}
+	if payload.Msg == "hello" && payload.Role == "receiver" && payload.RID == "" {
+		return nil, nil, fmt.Errorf("missing rid for receiver")
+	}
+	if payload.Msg == "mint" && (payload.Role != "receiver" || payload.ReceiverFP == "") {
+		return nil, nil, fmt.Errorf("invalid mint message (need receiver_fp)")
 	}
 
-	msg := &HelloMessage{Side: parts[1]}
-
-	switch msg.Side {
-	case "receiver":
-		msg.RID = extractValue(parts[2], "rid=")
-	case "sender":
-		msg.Code = extractValue(parts[2], "code=")
-	default:
-		return nil, nil, fmt.Errorf("unknown side: %s", msg.Side)
-	}
-
-	return msg, br, nil
+	return &payload, br, nil
 }
 
-func extractValue(s, prefix string) string {
-	if strings.HasPrefix(s, prefix) {
-		return strings.TrimPrefix(s, prefix)
+// ====== JSON response helpers ======
+
+func sendJSON(c net.Conn, v any) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
 	}
-	return ""
+	b = append(b, '\n')
+	if _, err := c.Write(b); err != nil {
+		return err
+	}
+	return nil
 }
 
-// ====== Protocol response helpers ======
-
-// ProtocolResponse represents a relay protocol response
-type ProtocolResponse struct {
-	Proto string
-	OK    bool
-	Err   string
-	FP    string
-	Exp   int64
-	Alg   string
-}
-
-// ComposeResponseHeader builds the protocol header block according to:
-//
-//	proto: ssh-relay/1
-//	OK
-//	fp=SHA256:...
-//	exp=1730550000
-//	alg=ssh-ed25519
-//
-//	(blank line before SSH banner)
-func ComposeResponseHeader(resp ProtocolResponse) string {
-	var sb strings.Builder
-
-	// Protocol version line
-	sb.WriteString("proto: ssh-relay/1\n")
-
-	// OK or ERR line
-	if resp.OK {
-		sb.WriteString("OK\n")
-	} else {
-		sb.WriteString("ERR")
-		if resp.Err != "" {
-			sb.WriteString(" ")
-			sb.WriteString(resp.Err)
-		}
-		sb.WriteString("\n")
-	}
-
-	// Fields (key=value format)
-	if resp.FP != "" {
-		sb.WriteString("fp=")
-		sb.WriteString(resp.FP)
-		sb.WriteString("\n")
-	}
-
-	if resp.Exp > 0 {
-		sb.WriteString("exp=")
-		sb.WriteString(fmt.Sprintf("%d", resp.Exp))
-		sb.WriteString("\n")
-	}
-
-	if resp.Alg != "" {
-		sb.WriteString("alg=")
-		sb.WriteString(resp.Alg)
-		sb.WriteString("\n")
-	}
-
-	sb.WriteString("\n") // final blank line before SSH banner
-	return sb.String()
-}
-
-// SendErrorResponse sends an error response to the connection
+// SendErrorResponse sends a JSON error response
 func SendErrorResponse(c net.Conn, errMsg string) error {
-	resp := ProtocolResponse{OK: false, Err: errMsg}
-	header := ComposeResponseHeader(resp)
-	_, err := c.Write([]byte(header))
-	if err != nil {
-		log.Printf("[TCP] write error: %v", err)
-	}
-	return err
+	return sendJSON(c, ErrorResponse{Msg: "error", Err: errMsg})
 }
 
-// SendSuccessResponse sends a success response with fingerprint and expiry
+// SendSuccessResponse sends a JSON ok response and a blank line before SSH starts
 func SendSuccessResponse(c net.Conn, fp string, exp int64, alg string) error {
-	resp := ProtocolResponse{
-		OK:  true,
-		FP:  fp,
-		Exp: exp,
-		Alg: alg,
+	if err := sendJSON(c, OKResponse{Msg: "ok", FP: fp, Exp: exp, Alg: alg}); err != nil {
+		return err
 	}
-	header := ComposeResponseHeader(resp)
-	_, err := c.Write([]byte(header))
-	if err != nil {
-		log.Printf("[TCP] write error: %v", err)
+	// Single blank line before SSH banner begins
+	if _, err := c.Write([]byte("\n")); err != nil {
+		return err
 	}
-	return err
+	return nil
 }
 
 // ====== Receiver protocol handler ======

@@ -60,22 +60,39 @@ func tcpServe(ctx context.Context, addr string) error {
 func handleTCP(c net.Conn) {
 	remoteAddr := c.RemoteAddr().String()
 
-	// Parse HELLO message
-	msg, br, err := ParseHelloMessage(c)
+    // Parse version + first JSON message (hello or mint)
+    msg, br, err := ParseHelloJSON(c)
 	if err != nil {
 		log.Printf("[TCP] %s -> %v", remoteAddr, err)
 		c.Close()
 		return
 	}
 
-	// Dispatch to appropriate handler
-	switch msg.Side {
+    // Dispatch to appropriate handler
+    switch msg.Role {
 	case "receiver":
-		handleReceiverConnection(c, msg.RID, br)
+        if msg.Msg == "mint" {
+            // Mint invite and attach this connection as the receiver
+            ttl := 10 * time.Minute
+            if msg.TTLSeconds > 0 && msg.TTLSeconds <= 3600 {
+                ttl = time.Duration(msg.TTLSeconds) * time.Second
+            }
+            inv := MintInvite(msg.ReceiverFP, ttl)
+            log.Printf("[MINT] receiver connected: fp=%s code=%s rid=%s expires=%s", msg.ReceiverFP, inv.Code, inv.RID, inv.ExpiresAt.Format(time.RFC3339))
+            // Reply with mint_ok
+            _ = sendJSON(c, MintOKResponse{Msg: "mint_ok", Code: inv.Code, RID: inv.RID, Exp: inv.ExpiresAt.Unix()})
+            // Attach this connection as receiver
+            LockInvites()
+            inv.ReceiverConn = newBufferedConn(c, br)
+            UnlockInvites()
+            // Now wait for sender as in receiver attachment
+            return
+        }
+        handleReceiverConnection(c, msg.RID, br)
 	case "sender":
 		handleSenderConnection(c, msg.Code, br)
 	default:
-		log.Printf("[TCP] %s -> ERR: unknown side '%s'", remoteAddr, msg.Side)
+		log.Printf("[TCP] %s -> ERR: unknown role '%s'", remoteAddr, msg.Role)
 		SendErrorResponse(c, "bad-side")
 		c.Close()
 	}
@@ -185,14 +202,12 @@ func spliceConnections(receiver, sender net.Conn, splice *Splice) {
 // Run executes the relay command
 // port is the TCP port number; HTTP will be served on port+1
 func Run(port int, interactive bool) error {
-	tcpAddr := fmt.Sprintf(":%d", port)
-	httpAddr := fmt.Sprintf(":%d", port+1)
+    tcpAddr := fmt.Sprintf(":%d", port)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	StartInviteCleanupLoop()
-	httpServer := StartHTTPServer(ctx, httpAddr)
+    StartInviteCleanupLoop()
 
 	var wg sync.WaitGroup
 
@@ -216,13 +231,7 @@ func Run(port int, interactive bool) error {
 	// Wait for shutdown signal or error
 	<-ctx.Done()
 
-	// Shutdown HTTP server
-	if httpServer != nil {
-		log.Printf("shutting down HTTP server...")
-		if err := httpServer.Shutdown(context.Background()); err != nil {
-			log.Printf("HTTP server shutdown error: %v", err)
-		}
-	}
+    // No HTTP server to shut down (HTTP mint removed)
 
 	// Wait for TCP server to finish
 	wg.Wait()
