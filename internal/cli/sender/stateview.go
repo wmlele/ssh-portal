@@ -2,10 +2,6 @@ package sender
 
 import (
 	"sync"
-
-	"github.com/charmbracelet/lipgloss"
-
-	"ssh-portal/internal/cli/tui"
 )
 
 // SenderState holds the current sender state
@@ -15,9 +11,11 @@ type SenderState struct {
 	Message string // Optional status message
 }
 
-var currentState = &SenderState{
-	Status: "connecting",
-}
+var (
+	currentState = &SenderState{
+		Status: "connecting",
+	}
+)
 
 // GetState returns the current sender state
 func GetState() *SenderState {
@@ -37,12 +35,9 @@ func SetStatus(status, message string) {
 	currentState.Message = message
 }
 
-// RenderStateView renders the sender state (connection status)
+// RenderStateView renders the sender state (connection status) for the right side
 func RenderStateView(width int) string {
 	state := GetState()
-
-	// Header with software name and colored bar
-	header := tui.RenderTitleBar("Sender", width)
 
 	var content string
 	switch state.Status {
@@ -66,7 +61,5 @@ func RenderStateView(width int) string {
 		content = "\nStatus: Unknown"
 	}
 
-	// Join header and content
-	return lipgloss.JoinVertical(lipgloss.Left, header, content)
+	return content
 }
-

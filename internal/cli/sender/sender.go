@@ -73,7 +73,12 @@ func startSSHClient(ctx context.Context, relayHost string, relayPort int, code s
 
 	// Start local port forwarding
 	go func() {
-		localForward(ctx, client, "127.0.0.1:10022", "127.0.0.1:22")
+		listen := "127.0.0.1:10022"
+		target := "127.0.0.1:22"
+		RegisterPortForward(listen, target)
+		localForward(ctx, client, listen, target)
+		// Note: Port forward stays registered even after localForward returns
+		// This is fine as it represents the configured forward, not active connections
 	}()
 
 	// Wait for context cancellation
