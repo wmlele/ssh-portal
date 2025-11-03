@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
+	"ssh-portal/internal/cli/receiver"
 	"ssh-portal/internal/config"
 	"ssh-portal/internal/log"
 	"ssh-portal/internal/version"
@@ -32,6 +33,14 @@ var (
 			}
 			return log.Init(viper.GetString("log.level"))
 		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			// If no subcommand specified, default to receiver
+			// Read flags from root command and pass to receiver
+			relayHost, _ := cmd.Flags().GetString("relay")
+			relayPort, _ := cmd.Flags().GetInt("relay-port")
+			interactive, _ := cmd.Flags().GetBool("interactive")
+			return receiver.Run(relayHost, relayPort, interactive)
+		},
 	}
 )
 
@@ -44,6 +53,11 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "info", "log level (debug|info|warn|error)")
 	_ = viper.BindPFlag("log.level", rootCmd.PersistentFlags().Lookup("log-level"))
 	_ = viper.BindEnv("log.level", "ssh-portal_LOG_LEVEL")
+
+	// Add receiver flags to root command (since receiver is the default)
+	rootCmd.Flags().StringVar(&receiverRelayHost, "relay", "localhost", "Relay server host")
+	rootCmd.Flags().IntVar(&receiverRelayPort, "relay-port", 4430, "Relay server TCP port (HTTP will be on port+1)")
+	rootCmd.Flags().BoolVar(&receiverInteractive, "interactive", true, "interactive mode")
 
 	// Add subcommands
 	rootCmd.AddCommand(testmenuCmd)
