@@ -61,6 +61,69 @@ func (m *senderTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		// If the form is open, give it first crack at key events
+		if m.showForm && m.portForm != nil {
+			var formCmd tea.Cmd
+			var updatedModel tea.Model
+			updatedModel, formCmd = m.portForm.Update(msg)
+			if updatedForm, ok := updatedModel.(*huh.Form); ok {
+				m.portForm = updatedForm
+
+				// If the form just completed, perform submission
+				if m.portForm.State == huh.StateCompleted {
+					if m.formData.LocalPort != "" && m.formData.RemoteAddr != "" && m.formData.RemotePort != "" {
+						listen := BuildListenAddress(m.formData.LocalPort)
+						target := BuildTargetAddress(m.formData.RemoteAddr, m.formData.RemotePort)
+						RegisterPortForward(listen, target)
+						// TODO: Start actual port forwarding here
+						// This requires access to the SSH client
+						m.showForm = false
+						m.portForm = nil
+						m.formData = PortForwardForm{}
+						m.updateTopContent()
+						// Restart ticker now that form is closed
+						if formCmd != nil {
+							return m, tea.Batch(formCmd, tea.Tick(time.Millisecond*500, func(time.Time) tea.Msg {
+								return updateTopContentMsg{}
+							}))
+						}
+						return m, tea.Tick(time.Millisecond*500, func(time.Time) tea.Msg {
+							return updateTopContentMsg{}
+						})
+					}
+				}
+				// Update viewport content to show form changes (input, validation, etc.)
+				m.updateTopContent()
+			}
+			if formCmd != nil {
+				return m, formCmd
+			}
+
+			// Handle global shortcuts while form is open
+			switch msg.String() {
+			case "esc":
+				// Cancel form
+				m.showForm = false
+				m.portForm = nil
+				m.formData = PortForwardForm{}
+				m.updateTopContent()
+				// Restart the automatic content update ticker
+				return m, tea.Tick(time.Millisecond*500, func(time.Time) tea.Msg {
+					return updateTopContentMsg{}
+				})
+			case "ctrl+c", "q":
+				// Signal shutdown before quitting
+				if m.cancel != nil {
+					m.cancel()
+				}
+				return m, tea.Quit
+			}
+
+			// Key was consumed by form or no extra action required
+			return m, nil
+		}
+
+		// Handle keys when form is not shown
 		switch msg.String() {
 		case "ctrl+c", "q":
 			// Signal shutdown before quitting
@@ -76,36 +139,6 @@ func (m *senderTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.portForm = NewPortForwardForm(m.leftViewport.Width, &m.formData)
 				// Stop the automatic content update ticker when form is shown
 				return m, m.portForm.Init()
-			}
-		case "esc":
-			// Cancel form
-			if m.showForm {
-				m.showForm = false
-				m.portForm = nil
-				m.formData = PortForwardForm{}
-				m.updateTopContent()
-				// Restart the automatic content update ticker
-				return m, tea.Tick(time.Millisecond*500, func(time.Time) tea.Msg {
-					return updateTopContentMsg{}
-				})
-			}
-		case "enter":
-			// Submit form if shown and completed
-			if m.showForm && m.portForm != nil {
-				if m.portForm.State == huh.StateCompleted {
-					// Form is completed, create the port forward
-					if m.formData.LocalPort != "" && m.formData.RemoteAddr != "" && m.formData.RemotePort != "" {
-						listen := BuildListenAddress(m.formData.LocalPort)
-						target := BuildTargetAddress(m.formData.RemoteAddr, m.formData.RemotePort)
-						RegisterPortForward(listen, target)
-						// TODO: Start actual port forwarding here
-						// This requires access to the SSH client
-						m.showForm = false
-						m.portForm = nil
-						m.formData = PortForwardForm{}
-						m.updateTopContent()
-					}
-				}
 			}
 		}
 
@@ -145,14 +178,11 @@ func (m *senderTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.leftViewport.Height = topHeight
 			m.rightViewport.Width = rightWidth
 			m.rightViewport.Height = topHeight
-			// Update form width if form is shown
+			// Update form width if form is shown - but preserve form state
 			if m.showForm && m.portForm != nil {
-				m.portForm = NewPortForwardForm(leftWidth, &m.formData)
-				// Re-initialize form with new width
-				formCmd := m.portForm.Init()
-				if formCmd != nil {
-					cmds = append(cmds, formCmd)
-				}
+				// Don't recreate the form, just update its width
+				// The form should handle width changes internally via its Update method
+				// Recreating would lose input state
 			}
 		}
 
@@ -199,6 +229,7 @@ func (m *senderTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			updatedModel, formCmd = m.portForm.Update(msg)
 			if updatedForm, ok := updatedModel.(*huh.Form); ok {
 				m.portForm = updatedForm
+
 				// Check if form was just completed
 				if m.portForm.State == huh.StateCompleted {
 					// Form is completed, create the port forward
@@ -211,21 +242,21 @@ func (m *senderTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.showForm = false
 						m.portForm = nil
 						m.formData = PortForwardForm{}
+						m.updateTopContent()
 						// Restart ticker now that form is closed
 						cmds = append(cmds, tea.Tick(time.Millisecond*500, func(time.Time) tea.Msg {
 							return updateTopContentMsg{}
 						}))
 					}
 				}
-				// Update content when form changes (but only if form is still active)
-				if m.showForm {
-					m.updateTopContent()
-				}
+				// Update viewport content to show form changes (input, validation, etc.)
+				// This needs to happen so the form's current state is visible
+				// Bubble Tea will call View() which reads from the viewport
+				m.updateTopContent()
 			}
 			if formCmd != nil {
 				cmds = append(cmds, formCmd)
 			}
-			// Form consumes all messages when active, don't process other updates
 			return m, tea.Batch(cmds...)
 		}
 
@@ -263,17 +294,22 @@ func (m *senderTUIModel) updateTopContent() {
 
 	var leftContent string
 	if m.showForm && m.portForm != nil {
-		// Show form
+		// Show form - let the form handle its own rendering
+		// We just need to render it into the viewport
 		titleStyle := lipgloss.NewStyle().
 			Bold(true).
 			Foreground(lipgloss.Color("62")).
 			MarginBottom(1)
 		title := titleStyle.Render("New Port Forward")
+
+		// Get the form view - this will include any validation errors or current state
 		formView := m.portForm.View()
+
 		helpText := lipgloss.NewStyle().
 			Foreground(lipgloss.Color("240")).
 			MarginTop(1).
 			Render("Press Enter to submit, Esc to cancel")
+
 		leftContent = lipgloss.JoinVertical(
 			lipgloss.Left,
 			title,
