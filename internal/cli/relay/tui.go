@@ -164,26 +164,30 @@ func (m *tuiModel) View() string {
 		return "\n  Initializing..."
 	}
 
-	// Split style
+	// Split style - invisible borders to maintain spacing
 	splitStyle := lipgloss.NewStyle().
-		Border(lipgloss.NormalBorder()).
-		BorderForeground(lipgloss.Color("240"))
+		Border(lipgloss.HiddenBorder()) // Invisible border, maintains spacing
+
+	// Bottom viewport style with slightly lighter background
+	bottomStyle := lipgloss.NewStyle().
+		Background(lipgloss.Color("235")). // Slightly lighter than default black (232/233)
+		Width(m.width - 2).
+		Height(m.bottomViewport.Height)
 
 	// Render viewports - don't set height on border style, let content determine it
 	topContent := m.topViewport.View()
 	bottomContent := m.bottomViewport.View()
 
-	// Border adds 2 columns (left + right)
-	// Viewport content is (m.width - 2) wide
-	// To get total width = m.width, we need border width to be m.width (lipgloss handles this)
-	// But if that's still too wide, try m.width - 2 so borders add up to m.width
+	// Apply invisible borders to maintain spacing (2 columns for left + right border)
 	topSection := splitStyle.
 		Width(m.width - 2).
 		Render(topContent)
 
+	// Bottom section with background color - apply background to the full section
+	bottomSectionWithBg := bottomStyle.Render(bottomContent)
 	bottomSection := splitStyle.
 		Width(m.width - 2).
-		Render(bottomContent)
+		Render(bottomSectionWithBg)
 
 	// Join sections vertically - lipgloss.JoinVertical adds newlines, so we get exact fit
 	result := lipgloss.JoinVertical(lipgloss.Left, topSection, bottomSection)
