@@ -19,6 +19,8 @@ import (
 
 	"github.com/creack/pty"
 	"golang.org/x/crypto/ssh"
+
+	"ssh-portal/internal/cli/usercode"
 )
 
 // DirectTCPIP represents an active direct-tcpip forwarding connection
@@ -74,12 +76,26 @@ func startSSHServer(relayHost string, relayPort int, enableSession bool) error {
 	}
 	defer connResult.Conn.Close()
 
-	// 3) Store state for TUI immediately after mint/hello (before waiting for ready)
-	SetState(mintResp.Code, mintResp.RID, fp)
+	// 3) Generate receiver code and user code, then store state for TUI
+	localSecret, err := usercode.GenerateReceiverCode()
+	if err != nil {
+		SetError(fmt.Sprintf("failed to generate receiver code: %v", err))
+		log.Printf("failed to generate receiver code: %v", err)
+		return err
+	}
 
-	fmt.Println("Code:", mintResp.Code)
-	fmt.Println("RID :", mintResp.RID)
-	fmt.Println("FP  :", fp)
+	userCode, fullCode, err := usercode.GenerateUserCode(mintResp.Code, localSecret)
+	if err != nil {
+		SetError(fmt.Sprintf("failed to generate user code: %v", err))
+		log.Printf("failed to generate user code: %v", err)
+		return err
+	}
+
+	SetState(userCode, mintResp.Code, localSecret, mintResp.RID, fp)
+	fmt.Println("Code      :", userCode)
+	fmt.Println("RelayCode :", mintResp.Code)
+	fmt.Println("RID       :", mintResp.RID)
+	fmt.Println("FP        :", fp)
 	fmt.Println("Waiting for sender to connect...")
 
 	// 4) Wait for "ready" message (sender has connected)
@@ -95,7 +111,7 @@ func startSSHServer(relayHost string, relayPort int, enableSession bool) error {
 	cfg := &ssh.ServerConfig{
 		PasswordCallback: func(c ssh.ConnMetadata, pass []byte) (*ssh.Permissions, error) {
 			expectedUsername := mintResp.Code
-			expectedPassword := mintResp.Code
+			expectedPassword := fullCode
 			if c.User() != expectedUsername || string(pass) != expectedPassword {
 				return nil, fmt.Errorf("invalid credentials")
 			}

@@ -10,11 +10,13 @@ import (
 
 // ReceiverState holds the current receiver state
 type ReceiverState struct {
-	mu    sync.RWMutex
-	Code  string
-	RID   string
-	FP    string
-	Error string
+	mu          sync.RWMutex
+	UserCode    string // User-friendly code (generated from RelayCode + LocalSecret)
+	RelayCode   string // Code from relay
+	LocalSecret string // Locally generated secret (not displayed)
+	RID         string
+	FP          string
+	Error       string
 }
 
 var currentState = &ReceiverState{}
@@ -24,18 +26,28 @@ func GetState() *ReceiverState {
 	currentState.mu.RLock()
 	defer currentState.mu.RUnlock()
 	return &ReceiverState{
-		Code:  currentState.Code,
-		RID:   currentState.RID,
-		FP:    currentState.FP,
-		Error: currentState.Error,
+		UserCode:    currentState.UserCode,
+		RelayCode:   currentState.RelayCode,
+		LocalSecret: currentState.LocalSecret,
+		RID:         currentState.RID,
+		FP:          currentState.FP,
+		Error:       currentState.Error,
 	}
 }
 
-// SetState updates the receiver state
-func SetState(code, rid, fp string) {
+// GetCombinedCode returns the user code (user-friendly code)
+func GetCombinedCode() string {
+	state := GetState()
+	return state.UserCode
+}
+
+// SetState updates the receiver state with user code, relay code, local secret, rid, and fingerprint
+func SetState(userCode, relayCode, localSecret, rid, fp string) {
 	currentState.mu.Lock()
 	defer currentState.mu.Unlock()
-	currentState.Code = code
+	currentState.UserCode = userCode
+	currentState.RelayCode = relayCode
+	currentState.LocalSecret = localSecret
 	currentState.RID = rid
 	currentState.FP = fp
 	currentState.Error = "" // Clear error on successful connection
@@ -179,12 +191,13 @@ func RenderLeftPaneContent(width int) string {
 	var content string
 	if state.Error != "" {
 		content = "ERROR: " + state.Error + "\n\nPress 'q' or Ctrl+C to quit"
-	} else if state.Code == "" && state.RID == "" && state.FP == "" {
+	} else if state.UserCode == "" && state.RID == "" && state.FP == "" {
 		content = "Waiting for connection..."
 	} else {
-		content = "Code: " + state.Code + "\n"
-		content += "RID:  " + state.RID + "\n"
-		content += "FP:   " + state.FP
+		content = "Code:      " + state.UserCode + "\n"
+		content += "RelayCode: " + state.RelayCode + "\n"
+		content += "RID:       " + state.RID + "\n"
+		content += "FP:        " + state.FP
 	}
 
 	result := lipgloss.JoinVertical(

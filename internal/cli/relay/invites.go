@@ -1,15 +1,15 @@
 package relay
 
 import (
-    "crypto/rand"
-    "encoding/base32"
-    "fmt"
-    "log"
-    "math/big"
-    "net"
-    "strings"
-    "sync"
-    "time"
+	"crypto/rand"
+	"encoding/base32"
+	"log"
+	"net"
+	"strings"
+	"sync"
+	"time"
+
+	"ssh-portal/internal/cli/usercode"
 )
 
 // Invite represents a connection invitation
@@ -118,9 +118,9 @@ func GetByCode(code string) *Invite {
 
 // MintInvite creates a new invite for the given receiver fingerprint
 func MintInvite(receiverFP string, ttl time.Duration) *Invite {
-	rid := randB32(16)               // rendezvous id (base32)
-	code := fmtCode()                // human code
-	exp := time.Now().Add(ttl).UTC() // expiry
+	rid := randB32(16)                         // rendezvous id (base32)
+	code, _ := usercode.GenerateReceiverCode() // receiver code; discard error or second value for now
+	exp := time.Now().Add(ttl).UTC()           // expiry
 	now := time.Now().UTC()
 	inv := &Invite{
 		RID:        rid,
@@ -205,22 +205,4 @@ func randB32(n int) string {
 	b := make([]byte, n)
 	_, _ = rand.Read(b)
 	return strings.TrimRight(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(b), "=")
-}
-
-var words = []string{
-	"alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india",
-	"juliet", "kilo", "lima", "mike", "november", "oscar", "papa", "quebec", "romeo",
-	"sierra", "tango", "uniform", "victor", "whiskey", "xray", "yankee", "zulu",
-}
-
-func fmtCode() string {
-	w1 := words[randN(len(words))]
-	w2 := words[randN(len(words))]
-	num := randN(9000) + 1000
-	return fmt.Sprintf("%s-%s-%d", w1, w2, num)
-}
-
-func randN(n int) int {
-	v, _ := rand.Int(rand.Reader, big.NewInt(int64(n)))
-	return int(v.Int64())
 }

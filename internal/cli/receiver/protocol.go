@@ -12,7 +12,7 @@ import (
 // --- Protocol structures ---
 
 // JSONHello is the JSON hello message sent to the relay before SSH starts
-type JSONHello struct {
+type HelloMessage struct {
 	Msg  string `json:"msg"`
 	Role string `json:"role"`
 	Code string `json:"code,omitempty"`
@@ -66,7 +66,7 @@ func ConnectAndHello(relayAddr, rid string) (*ConnectionResult, error) {
 		conn.Close()
 		return nil, fmt.Errorf("failed to send version: %w", err)
 	}
-	if err := json.NewEncoder(conn).Encode(JSONHello{Msg: "hello", Role: "receiver", RID: rid}); err != nil {
+	if err := json.NewEncoder(conn).Encode(HelloMessage{Msg: "hello", Role: "receiver", RID: rid}); err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("failed to send hello: %w", err)
 	}
@@ -113,7 +113,7 @@ func ConnectToRelay(relayHost string, relayPort int, receiverFP string) (*Connec
 	}
 
 	// 4) On same connection, send hello with RID to attach
-	if err := json.NewEncoder(conn).Encode(JSONHello{Msg: "hello", Role: "receiver", RID: m.RID}); err != nil {
+	if err := json.NewEncoder(conn).Encode(HelloMessage{Msg: "hello", Role: "receiver", RID: m.RID}); err != nil {
 		conn.Close()
 		return nil, nil, fmt.Errorf("failed to send hello: %w", err)
 	}

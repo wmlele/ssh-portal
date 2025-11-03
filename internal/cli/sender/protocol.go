@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"ssh-portal/internal/cli/usercode"
 	"strconv"
 	"strings"
 	"time"
@@ -53,21 +54,38 @@ type ConnectionResult struct {
 	ClientConfig *ssh.ClientConfig
 }
 
+// parseCode splits a combined code into relayCode and localSecret
+// Format: "relayCode-localSecret" where relayCode may contain dashes (e.g., "alpha-bravo-1234-XYZ123")
+// Splits on the LAST dash to handle relay codes that already contain dashes
+func parseCode(code string) (relayCode, fullCode string) {
+	fullCode = code
+	lastDash := strings.LastIndex(code, "-")
+	if lastDash > 0 {
+		relayCode = code[:lastDash]
+	} else {
+		relayCode = code
+	}
+	return relayCode, fullCode
+}
+
 // --- Entry point ---
 
 func ConnectAndHandshake(relayAddr, code string) (*ConnectionResult, error) {
+	// Parse code to separate relay code from local secret
+	relayCode, _, fullCode, _ := usercode.ParseUserCode(code)
+
 	// 1) Connect
 	sock, err := net.Dial("tcp", relayAddr)
 	if err != nil {
 		return nil, fmt.Errorf("connect relay: %w", err)
 	}
 
-	// 2) Send version + JSON hello
+	// 2) Send version + JSON hello (only relay code to relay)
 	if _, err := fmt.Fprintln(sock, "ssh-relay/1.0"); err != nil {
 		sock.Close()
 		return nil, fmt.Errorf("send version: %w", err)
 	}
-	if err := json.NewEncoder(sock).Encode(JSONHello{Msg: "hello", Role: "sender", Code: code}); err != nil {
+	if err := json.NewEncoder(sock).Encode(JSONHello{Msg: "hello", Role: "sender", Code: relayCode}); err != nil {
 		sock.Close()
 		return nil, fmt.Errorf("send hello: %w", err)
 	}
@@ -133,9 +151,10 @@ func ConnectAndHandshake(relayAddr, code string) (*ConnectionResult, error) {
 	sshConn := &prebufConn{Conn: sock, r: io.MultiReader(br, sock)}
 
 	// 6) Create pinned SSH client config
+	// Username: relayCode only, Password: full code (relayCode-localSecret)
 	cfg := &ssh.ClientConfig{
-		User: code,
-		Auth: []ssh.AuthMethod{ssh.Password(code)},
+		User: relayCode,
+		Auth: []ssh.AuthMethod{ssh.Password(fullCode)},
 		HostKeyCallback: func(host string, addr net.Addr, key ssh.PublicKey) error {
 			got := ssh.FingerprintSHA256(key)
 			if got != fp {
