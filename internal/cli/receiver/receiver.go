@@ -49,22 +49,28 @@ func GetAllDirectTCPIPs() []*DirectTCPIP {
 	return result
 }
 
-func startSSHServer(relayHost string, relayPort int) {
+func startSSHServer(relayHost string, relayPort int) error {
 	// 1) Generate host key (ephemeral; persist if you want TOFU)
 	_, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
-		log.Fatalf("failed to generate host key: %v", err)
+		SetError(fmt.Sprintf("failed to generate host key: %v", err))
+		log.Printf("failed to generate host key: %v", err)
+		return err
 	}
 	signer, err := ssh.NewSignerFromSigner(priv)
 	if err != nil {
-		log.Fatalf("failed to create signer: %v", err)
+		SetError(fmt.Sprintf("failed to create signer: %v", err))
+		log.Printf("failed to create signer: %v", err)
+		return err
 	}
 	fp := ssh.FingerprintSHA256(signer.PublicKey())
 
 	// 2) Connect to relay and perform protocol handshake
 	connResult, mintResp, err := ConnectToRelay(relayHost, relayPort, fp)
 	if err != nil {
-		log.Fatalf("failed to connect to relay: %v", err)
+		SetError(fmt.Sprintf("failed to connect to relay: %v", err))
+		log.Printf("failed to connect to relay: %v", err)
+		return err
 	}
 	defer connResult.Conn.Close()
 
@@ -83,7 +89,9 @@ func startSSHServer(relayHost string, relayPort int) {
 
 	sshConn, chans, reqs, err := ssh.NewServerConn(connResult.Conn, cfg)
 	if err != nil {
-		log.Fatalf("SSH server connection failed: %v", err)
+		SetError(fmt.Sprintf("SSH server connection failed: %v", err))
+		log.Printf("SSH server connection failed: %v", err)
+		return err
 	}
 	defer sshConn.Close()
 
@@ -105,6 +113,9 @@ func startSSHServer(relayHost string, relayPort int) {
 			ch.Reject(ssh.UnknownChannelType, "unsupported")
 		}
 	}
+	// This should never be reached as the loop runs indefinitely
+	// but required for the function signature
+	return nil
 }
 
 // handleDirectTCPIP handles direct-tcpip channel requests (port forwarding)
@@ -301,9 +312,12 @@ func Run(relayHost string, relayPort int, interactive bool) error {
 		}
 	}
 
-	// Start SSH server in a goroutine (it runs indefinitely)
+	// Start SSH server in a goroutine (it runs indefinitely or until error)
 	go func() {
-		startSSHServer(relayHost, relayPort)
+		if err := startSSHServer(relayHost, relayPort); err != nil {
+			// Error already logged and set in state view
+			log.Printf("SSH server failed to start, but keeping receiver running for manual quit")
+		}
 	}()
 
 	// Wait for shutdown signal

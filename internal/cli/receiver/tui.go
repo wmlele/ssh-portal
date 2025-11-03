@@ -15,7 +15,7 @@ import (
 
 const (
 	maxLogLines      = 500 // Keep last 500 lines in memory
-	topSectionHeight = 50  // Percentage of available height for top section (rest goes to logs)
+	topSectionHeight = 70  // Percentage of available height for top section (rest goes to logs)
 )
 
 // TUI model for receiver
@@ -190,4 +190,3 @@ func startTUI(ctx context.Context, cancel context.CancelFunc) error {
 
 	return nil
 }
-
