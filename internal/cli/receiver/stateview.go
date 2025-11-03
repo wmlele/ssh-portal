@@ -1,7 +1,10 @@
 package receiver
 
 import (
+	"strings"
 	"sync"
+
+	"github.com/charmbracelet/lipgloss"
 )
 
 // ReceiverState holds the current receiver state
@@ -48,19 +51,35 @@ func SetError(err string) {
 func RenderStateView(width int) string {
 	state := GetState()
 	
+	// Header with software name and colored bar
+	headerStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("62")).
+		Padding(0, 1)
+	
+	barStyle := lipgloss.NewStyle().
+		Background(lipgloss.Color("62")).
+		Width(width).
+		Height(1)
+	
+	title := headerStyle.Render("SSH Portal - Receiver")
+	bar := barStyle.Render(strings.Repeat(" ", width))
+	header := lipgloss.JoinVertical(lipgloss.Left, title, bar)
+	
+	var content string
+	
 	// Show error if present
 	if state.Error != "" {
-		return "ERROR: " + state.Error + "\n\nPress 'q' or Ctrl+C to quit"
+		content = "ERROR: " + state.Error + "\n\nPress 'q' or Ctrl+C to quit"
+	} else if state.Code == "" && state.RID == "" && state.FP == "" {
+		content = "Waiting for connection..."
+	} else {
+		content = "Code: " + state.Code + "\n"
+		content += "RID:  " + state.RID + "\n"
+		content += "FP:   " + state.FP
 	}
 	
-	if state.Code == "" && state.RID == "" && state.FP == "" {
-		return "Waiting for connection..."
-	}
-	
-	content := "Code: " + state.Code + "\n"
-	content += "RID:  " + state.RID + "\n"
-	content += "FP:   " + state.FP
-	
-	return content
+	// Join header and content
+	return lipgloss.JoinVertical(lipgloss.Left, header, content)
 }
 

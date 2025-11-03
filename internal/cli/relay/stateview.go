@@ -10,6 +10,21 @@ import (
 
 // RenderStateView renders the invites and splices in a two-column layout
 func RenderStateView(width int) string {
+	// Header with software name and colored bar
+	headerStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("62")).
+		Padding(0, 1)
+
+	barStyle := lipgloss.NewStyle().
+		Background(lipgloss.Color("62")).
+		Width(width).
+		Height(1)
+
+	title := headerStyle.Render("SSH Portal - Relay")
+	bar := barStyle.Render(strings.Repeat(" ", width))
+	header := lipgloss.JoinVertical(lipgloss.Left, title, bar)
+
 	invites := GetOutstandingInvites()
 	splices := GetActiveSplices()
 
@@ -27,7 +42,8 @@ func RenderStateView(width int) string {
 		Width(width).
 		Render(columns)
 
-	return wrapped
+	// Join header and content
+	return lipgloss.JoinVertical(lipgloss.Left, header, wrapped)
 }
 
 func formatInvites(invites []*Invite, width int) string {
@@ -36,9 +52,7 @@ func formatInvites(invites []*Invite, width int) string {
 		Foreground(lipgloss.Color("62")).
 		MarginBottom(1)
 
-	borderStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("62")).
+	containerStyle := lipgloss.NewStyle().
 		Padding(1, 2).
 		Width(width)
 
@@ -46,7 +60,7 @@ func formatInvites(invites []*Invite, width int) string {
 
 	if len(invites) == 0 {
 		content := "No outstanding invites"
-		return borderStyle.Render(lipgloss.JoinVertical(lipgloss.Left, title, content))
+		return containerStyle.Render(lipgloss.JoinVertical(lipgloss.Left, title, content))
 	}
 
 	// Table header
@@ -86,7 +100,7 @@ func formatInvites(invites []*Invite, width int) string {
 	}
 
 	content := strings.Join(rows, "\n")
-	return borderStyle.Render(content)
+	return containerStyle.Render(content)
 }
 
 func formatSplices(splices []*Splice, width int) string {
@@ -95,9 +109,7 @@ func formatSplices(splices []*Splice, width int) string {
 		Foreground(lipgloss.Color("62")).
 		MarginBottom(1)
 
-	borderStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("62")).
+	containerStyle := lipgloss.NewStyle().
 		Padding(1, 2).
 		Width(width)
 
@@ -105,7 +117,7 @@ func formatSplices(splices []*Splice, width int) string {
 
 	if len(splices) == 0 {
 		content := "No active splices"
-		return borderStyle.Render(lipgloss.JoinVertical(lipgloss.Left, title, content))
+		return containerStyle.Render(lipgloss.JoinVertical(lipgloss.Left, title, content))
 	}
 
 	// Table header
@@ -151,7 +163,7 @@ func formatSplices(splices []*Splice, width int) string {
 	}
 
 	content := strings.Join(rows, "\n")
-	return borderStyle.Render(content)
+	return containerStyle.Render(content)
 }
 
 func formatBytes(b int64) string {
@@ -166,4 +178,3 @@ func formatBytes(b int64) string {
 	}
 	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
 }
-
