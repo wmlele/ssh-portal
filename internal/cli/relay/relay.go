@@ -208,8 +208,7 @@ func Run(port int, interactive bool) error {
 
 	if interactive {
 		// Start TUI for interactive mode
-		logWriter := newLogTailWriter(maxLogLines)
-		if err := startTUI(ctx, cancel, logWriter); err != nil {
+		if err := startTUI(ctx, cancel); err != nil {
 			return fmt.Errorf("failed to start TUI: %w", err)
 		}
 	}
