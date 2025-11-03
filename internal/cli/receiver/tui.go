@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -16,16 +17,19 @@ import (
 const (
 	maxLogLines      = 500 // Keep last 500 lines in memory
 	topSectionHeight = 70  // Percentage of available height for top section (rest goes to logs)
+	leftSectionWidth = 40  // Percentage of available width for left section (info), rest goes to right (forwards)
 )
 
 // TUI model for receiver
 type receiverTUIModel struct {
-	topViewport viewport.Model
-	logViewer   *tui.LogViewer
-	cancel      context.CancelFunc
-	width       int
-	height      int
-	ready       bool
+	forwardsTable table.Model
+	leftViewport  viewport.Model
+	rightViewport viewport.Model
+	logViewer     *tui.LogViewer
+	cancel        context.CancelFunc
+	width         int
+	height        int
+	ready         bool
 }
 
 func newReceiverTUIModel(logWriter *tui.LogTailWriter, cancel context.CancelFunc) *receiverTUIModel {
@@ -71,14 +75,32 @@ func (m *receiverTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		topHeight := (availableHeight * topSectionHeight) / 100
 		bottomHeight := availableHeight - topHeight
 
+		// Split top section into left (info) and right (forwards table)
+		// Reserve space for divider (1 char) and borders
+		availableWidth := msg.Width - borderWidth
+		// Calculate widths based on percentage split
+		leftWidth := (availableWidth * leftSectionWidth) / 100
+		rightWidth := availableWidth - leftWidth - 1 // -1 for divider
+
+		// Reserve some height for header/info in right pane, rest for table
+		tableHeight := topHeight - 4 // Reserve ~4 lines for title and info
+		if tableHeight < 3 {
+			tableHeight = 3
+		}
+
 		if !m.ready {
-			m.topViewport = viewport.New(msg.Width-borderWidth, topHeight)
+			m.forwardsTable = NewForwardsTable(rightWidth, tableHeight)
+			m.leftViewport = viewport.New(leftWidth, topHeight)
+			m.rightViewport = viewport.New(rightWidth, topHeight)
 			m.width = msg.Width
 			m.height = msg.Height
 			m.ready = true
 		} else {
-			m.topViewport.Width = msg.Width - borderWidth
-			m.topViewport.Height = topHeight
+			m.forwardsTable = UpdateForwardsTable(m.forwardsTable, rightWidth, tableHeight)
+			m.leftViewport.Width = leftWidth
+			m.leftViewport.Height = topHeight
+			m.rightViewport.Width = rightWidth
+			m.rightViewport.Height = topHeight
 		}
 
 		// Update top content with current data
@@ -87,11 +109,19 @@ func (m *receiverTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Update log viewer size
 		m.logViewer.SetSize(msg.Width, bottomHeight)
 
-		// Handle viewport updates
-		var topCmd tea.Cmd
-		m.topViewport, topCmd = m.topViewport.Update(msg)
-		if topCmd != nil {
-			cmds = append(cmds, topCmd)
+		// Handle table and viewport updates
+		var tableCmd, leftCmd, rightCmd tea.Cmd
+		m.forwardsTable, tableCmd = m.forwardsTable.Update(msg)
+		if tableCmd != nil {
+			cmds = append(cmds, tableCmd)
+		}
+		m.leftViewport, leftCmd = m.leftViewport.Update(msg)
+		if leftCmd != nil {
+			cmds = append(cmds, leftCmd)
+		}
+		m.rightViewport, rightCmd = m.rightViewport.Update(msg)
+		if rightCmd != nil {
+			cmds = append(cmds, rightCmd)
 		}
 
 	case updateTopContentMsg:
@@ -101,12 +131,20 @@ func (m *receiverTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		})
 
 	default:
-		// Handle top viewport updates
+		// Handle table and viewport updates
 		if m.ready {
-			var topCmd tea.Cmd
-			m.topViewport, topCmd = m.topViewport.Update(msg)
-			if topCmd != nil {
-				cmds = append(cmds, topCmd)
+			var tableCmd, leftCmd, rightCmd tea.Cmd
+			m.forwardsTable, tableCmd = m.forwardsTable.Update(msg)
+			if tableCmd != nil {
+				cmds = append(cmds, tableCmd)
+			}
+			m.leftViewport, leftCmd = m.leftViewport.Update(msg)
+			if leftCmd != nil {
+				cmds = append(cmds, leftCmd)
+			}
+			m.rightViewport, rightCmd = m.rightViewport.Update(msg)
+			if rightCmd != nil {
+				cmds = append(cmds, rightCmd)
 			}
 		}
 
@@ -125,9 +163,16 @@ func (m *receiverTUIModel) updateTopContent() {
 		return
 	}
 
-	// Use stateview to render the content
-	content := RenderStateView(m.topViewport.Width)
-	m.topViewport.SetContent(content)
+	// Update forwards table with current data
+	m.forwardsTable = UpdateForwardsTable(m.forwardsTable, m.forwardsTable.Width(), m.forwardsTable.Height())
+
+	// Render left pane: connection info
+	leftContent := RenderLeftPaneContent(m.leftViewport.Width)
+	m.leftViewport.SetContent(leftContent)
+
+	// Render right pane: forwards table
+	rightContent := RenderRightPaneContent(m.rightViewport.Width, m.forwardsTable)
+	m.rightViewport.SetContent(rightContent)
 }
 
 func (m *receiverTUIModel) View() string {
@@ -135,22 +180,77 @@ func (m *receiverTUIModel) View() string {
 		return "\n  Initializing..."
 	}
 
+	// Header spans full width
+	header := tui.RenderTitleBar("Receiver", m.width-2)
+
 	// Invisible borders to maintain spacing
 	splitStyle := lipgloss.NewStyle().
 		Border(lipgloss.HiddenBorder())
 
-	topContent := m.topViewport.View()
+	// Get left and right viewport content
+	leftContent := m.leftViewport.View()
+	rightContent := m.rightViewport.View()
+
+	// Create vertical divider style
+	dividerStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("240"))
+
+	// Split content into lines and join with divider
+	leftLines := strings.Split(leftContent, "\n")
+	rightLines := strings.Split(rightContent, "\n")
+
+	// Determine the actual width of the left pane
+	leftWidth := 0
+	for _, line := range leftLines {
+		if line != "" {
+			leftWidth = lipgloss.Width(line)
+			break
+		}
+	}
+	if leftWidth == 0 {
+		leftWidth = m.leftViewport.Width
+	}
+
+	// Ensure both have the same number of lines
+	maxLines := len(leftLines)
+	if len(rightLines) > maxLines {
+		maxLines = len(rightLines)
+	}
+
+	var combinedLines []string
+	for i := 0; i < maxLines; i++ {
+		leftLine := ""
+		if i < len(leftLines) {
+			leftLine = leftLines[i]
+		}
+		rightLine := ""
+		if i < len(rightLines) {
+			rightLine = rightLines[i]
+		}
+
+		// Pad left line to viewport width, then add divider, then right line
+		leftDisplayWidth := lipgloss.Width(leftLine)
+		if leftWidth > 0 && leftDisplayWidth < leftWidth {
+			leftLine += strings.Repeat(" ", leftWidth-leftDisplayWidth)
+		}
+
+		divider := dividerStyle.Render("│")
+		combinedLine := leftLine + divider + rightLine
+		combinedLines = append(combinedLines, combinedLine)
+	}
+
+	topRow := strings.Join(combinedLines, "\n")
 	bottomContent := m.logViewer.View()
 
 	topSection := splitStyle.
 		Width(m.width - 2).
-		Render(topContent)
+		Render(topRow)
 
 	bottomSection := splitStyle.
 		Width(m.width - 2).
 		Render(bottomContent)
 
-	result := lipgloss.JoinVertical(lipgloss.Left, topSection, bottomSection)
+	result := lipgloss.JoinVertical(lipgloss.Left, header, topSection, bottomSection)
 	lines := strings.Split(result, "\n")
 	expectedHeight := m.height
 	if len(lines) > expectedHeight {

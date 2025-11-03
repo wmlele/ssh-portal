@@ -2,12 +2,10 @@ package receiver
 
 import (
 	"fmt"
-	"strings"
 	"sync"
 
+	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/lipgloss"
-
-	"ssh-portal/internal/cli/tui"
 )
 
 // ReceiverState holds the current receiver state
@@ -50,80 +48,163 @@ func SetError(err string) {
 	currentState.Error = err
 }
 
-// RenderStateView renders the receiver state (code/rid/fp and TCP/IP forwards) without styling
-func RenderStateView(width int) string {
-	state := GetState()
+// NewForwardsTable creates and returns a table.Model configured for DirectTCPIP forwards
+func NewForwardsTable(width, height int) table.Model {
+	if width < 20 {
+		width = 20
+	}
+	if height < 3 {
+		height = 3
+	}
+	availableWidth := width - 4
+	// Two columns: Origin, Destination
+	colWidth := availableWidth / 2
 
-	// Header with software name and colored bar
-	header := tui.RenderTitleBar("Receiver", width)
-
-	var content string
-
-	// Show error if present
-	if state.Error != "" {
-		content = "ERROR: " + state.Error + "\n\nPress 'q' or Ctrl+C to quit"
-	} else if state.Code == "" && state.RID == "" && state.FP == "" {
-		content = "Waiting for connection..."
-	} else {
-		// Show connection info
-		infoContent := "Code: " + state.Code + "\n"
-		infoContent += "RID:  " + state.RID + "\n"
-		infoContent += "FP:   " + state.FP + "\n"
-
-		// Show TCP/IP forwards table
-		forwards := GetAllDirectTCPIPs()
-		forwardsTable := formatTCPIPForwards(forwards, width)
-
-		content = infoContent + "\n" + forwardsTable
+	columns := []table.Column{
+		{Title: "Origin", Width: colWidth},
+		{Title: "Destination", Width: colWidth},
 	}
 
-	// Join header and content
-	return lipgloss.JoinVertical(lipgloss.Left, header, content)
-}
-
-func formatTCPIPForwards(forwards []*DirectTCPIP, width int) string {
-	titleStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("62")).
-		MarginBottom(1)
-
-	title := titleStyle.Render("Active TCP/IP Forwards")
-
-	if len(forwards) == 0 {
-		return title + "\nNo active forwards"
-	}
-
-	// Table header
-	headerStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("240")).
-		Padding(0, 1)
-
-	header := headerStyle.Render("Origin              Destination")
-	divider := strings.Repeat("─", width-4)
-
-	var rows []string
-	rows = append(rows, title)
-	rows = append(rows, header)
-	rows = append(rows, divider)
-
-	rowStyle := lipgloss.NewStyle().Padding(0, 1)
+	rows := []table.Row{}
+	forwards := GetAllDirectTCPIPs()
 	for _, fwd := range forwards {
 		origin := fmt.Sprintf("%s:%d", fwd.OriginAddr, fwd.OriginPort)
 		dest := fmt.Sprintf("%s:%d", fwd.DestAddr, fwd.DestPort)
 
 		// Truncate if too long
-		if len(origin) > 18 {
-			origin = origin[:18]
+		if len(origin) > colWidth {
+			origin = origin[:colWidth]
 		}
-		if len(dest) > 18 {
-			dest = dest[:18]
+		if len(dest) > colWidth {
+			dest = dest[:colWidth]
 		}
 
-		row := fmt.Sprintf("%-18s %-18s", origin, dest)
-		rows = append(rows, rowStyle.Render(row))
+		rows = append(rows, table.Row{origin, dest})
 	}
 
-	content := strings.Join(rows, "\n")
+	t := table.New(
+		table.WithColumns(columns),
+		table.WithRows(rows),
+		table.WithFocused(true),
+		table.WithHeight(height),
+		table.WithWidth(width),
+	)
+
+	s := table.DefaultStyles()
+	s.Header = s.Header.
+		BorderStyle(lipgloss.NormalBorder()).
+		BorderForeground(lipgloss.Color("240")).
+		BorderBottom(true).
+		Bold(true).
+		Foreground(lipgloss.Color("62"))
+	s.Selected = s.Selected.
+		Foreground(lipgloss.Color("230")).
+		Background(lipgloss.Color("62")).
+		Bold(false)
+	t.SetStyles(s)
+
+	return t
+}
+
+// UpdateForwardsTable updates the table with current forwards data
+func UpdateForwardsTable(t table.Model, width, height int) table.Model {
+	if width < 20 {
+		width = 20
+	}
+	if height < 3 {
+		height = 3
+	}
+	availableWidth := width - 4
+	colWidth := availableWidth / 2
+
+	columns := []table.Column{
+		{Title: "Origin", Width: colWidth},
+		{Title: "Destination", Width: colWidth},
+	}
+
+	rows := []table.Row{}
+	forwards := GetAllDirectTCPIPs()
+	for _, fwd := range forwards {
+		origin := fmt.Sprintf("%s:%d", fwd.OriginAddr, fwd.OriginPort)
+		dest := fmt.Sprintf("%s:%d", fwd.DestAddr, fwd.DestPort)
+
+		// Truncate if too long
+		if len(origin) > colWidth {
+			origin = origin[:colWidth]
+		}
+		if len(dest) > colWidth {
+			dest = dest[:colWidth]
+		}
+
+		rows = append(rows, table.Row{origin, dest})
+	}
+
+	t.SetColumns(columns)
+	t.SetRows(rows)
+	t.SetWidth(width)
+	t.SetHeight(height)
+
+	return t
+}
+
+// RenderLeftPaneContent renders the connection info for the left pane
+func RenderLeftPaneContent(width int) string {
+	state := GetState()
+
+	titleStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("62")).
+		MarginBottom(1)
+
+	title := titleStyle.Render("Connection Info")
+
+	var content string
+	if state.Error != "" {
+		content = "ERROR: " + state.Error + "\n\nPress 'q' or Ctrl+C to quit"
+	} else if state.Code == "" && state.RID == "" && state.FP == "" {
+		content = "Waiting for connection..."
+	} else {
+		content = "Code: " + state.Code + "\n"
+		content += "RID:  " + state.RID + "\n"
+		content += "FP:   " + state.FP
+	}
+
+	result := lipgloss.JoinVertical(
+		lipgloss.Left,
+		title,
+		content,
+	)
+
+	return result
+}
+
+// RenderRightPaneContent renders the forwards table with header for the right pane
+func RenderRightPaneContent(width int, forwardsTable table.Model) string {
+	titleStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("62")).
+		MarginBottom(1)
+
+	infoStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("240")).
+		MarginBottom(1)
+
+	title := titleStyle.Render("Active TCP/IP Forwards")
+	
+	forwards := GetAllDirectTCPIPs()
+	info := infoStyle.Render(fmt.Sprintf("Active: %d", len(forwards)))
+	
+	tableView := forwardsTable.View()
+	if tableView == "" {
+		tableView = "  No active forwards"
+	}
+
+	content := lipgloss.JoinVertical(
+		lipgloss.Left,
+		title,
+		info,
+		tableView,
+	)
+
 	return content
 }
