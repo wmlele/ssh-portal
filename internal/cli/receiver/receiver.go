@@ -106,6 +106,7 @@ func startSSHServer(relayHost string, relayPort int, enableSession bool) error {
 		return err
 	}
 	log.Printf("Received ready from relay: sender=%s fp=%s", ready.SenderAddr, ready.Fingerprint)
+	SetSenderAddr(ready.SenderAddr)
 
 	// 5) Setup SSH server over the connection (now ready for SSH handshake)
 	cfg := &ssh.ServerConfig{
@@ -128,7 +129,12 @@ func startSSHServer(relayHost string, relayPort int, enableSession bool) error {
 	}
 	defer sshConn.Close()
 
-	log.Printf("SSH connection established with sender: %s", sshConn.RemoteAddr())
+	state := GetState()
+	senderAddr := state.SenderAddr
+	if senderAddr == "" {
+		senderAddr = sshConn.RemoteAddr().String()
+	}
+	log.Printf("SSH connection established with sender: %s", senderAddr)
 	SetSSHEstablished()
 
 	// Handle global requests (remote-forward control)
