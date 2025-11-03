@@ -2,7 +2,9 @@ package sender
 
 import (
 	"fmt"
+	"log"
 	"net"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -25,7 +27,7 @@ var (
 	portForwards   = make(map[string]*PortForward)
 )
 
-// RegisterPortForward registers a new port forward
+// RegisterPortForward registers a new port forward and immediately starts forwarding
 func RegisterPortForward(listen, target string) string {
 	portForwardsMu.Lock()
 	defer portForwardsMu.Unlock()
@@ -38,14 +40,31 @@ func RegisterPortForward(listen, target string) string {
 		CreatedAt: time.Now(),
 	}
 	portForwards[id] = pf
+
+	// Start the actual port forward immediately
+	if err := createLocalForward(id, listen, target); err != nil {
+		log.Printf("Failed to create port forward %s -> %s: %v", listen, target, err)
+		// Remove from registry if forward creation failed
+		delete(portForwards, id)
+		return ""
+	}
+
 	return id
 }
 
-// UnregisterPortForward removes a port forward
+// UnregisterPortForward removes a port forward and immediately stops forwarding
 func UnregisterPortForward(id string) {
 	portForwardsMu.Lock()
-	defer portForwardsMu.Unlock()
+	_, exists := portForwards[id]
 	delete(portForwards, id)
+	portForwardsMu.Unlock()
+
+	// Stop the actual port forward immediately
+	if exists {
+		if err := deleteLocalForward(id); err != nil {
+			log.Printf("Failed to delete port forward %s: %v", id, err)
+		}
+	}
 }
 
 // GetAllPortForwards returns all configured port forwards
@@ -58,6 +77,59 @@ func GetAllPortForwards() []*PortForward {
 		result = append(result, pf)
 	}
 	return result
+}
+
+func clampTableSize(width, height int) (int, int, int) {
+	// Ensure minimum width and height; compute column widths
+	if width < 20 {
+		width = 20
+	}
+	if height < 3 {
+		height = 3
+	}
+	availableWidth := width - 4 // Account for borders
+	columnWidth := availableWidth / 2
+	if columnWidth < 4 {
+		columnWidth = 4
+	}
+	return width, height, columnWidth
+}
+
+func buildPortsColumns(columnWidth int) []table.Column {
+	return []table.Column{
+		{Title: "Local", Width: columnWidth},
+		{Title: "Remote", Width: columnWidth},
+	}
+}
+
+func buildPortsRows() []table.Row {
+	forwards := GetAllPortForwards()
+
+	// Sort by source port (extracted from Listen address)
+	sort.Slice(forwards, func(i, j int) bool {
+		// Extract port from Listen address (format: "host:port")
+		portI := extractPort(forwards[i].Listen)
+		portJ := extractPort(forwards[j].Listen)
+		return portI < portJ
+	})
+
+	rows := make([]table.Row, len(forwards))
+	for i, pf := range forwards {
+		rows[i] = table.Row{pf.Listen, pf.Target}
+	}
+	return rows
+}
+
+func extractPort(addr string) int {
+	_, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
+		return 0
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return 0
+	}
+	return port
 }
 
 // NewPortsTable creates and returns a table.Model configured for port forwards
@@ -111,29 +183,11 @@ func NewPortsTable(width, height int) table.Model {
 
 // UpdatePortsTable updates the table with current port forwards data
 func UpdatePortsTable(t table.Model, width, height int) table.Model {
-	// Calculate column widths - ensure minimum size
-	if width < 20 {
-		width = 20
-	}
-	if height < 3 {
-		height = 3
-	}
-	availableWidth := width - 4 // Account for borders
-	columnWidth := availableWidth / 2
-	if columnWidth < 4 {
-		columnWidth = 4
-	}
+	// Compute sizes and columns
+	width, height, columnWidth := clampTableSize(width, height)
 
-	columns := []table.Column{
-		{Title: "Local", Width: columnWidth},
-		{Title: "Remote", Width: columnWidth},
-	}
-
-	rows := []table.Row{}
-	forwards := GetAllPortForwards()
-	for _, pf := range forwards {
-		rows = append(rows, table.Row{pf.Listen, pf.Target})
-	}
+	columns := buildPortsColumns(columnWidth)
+	rows := buildPortsRows()
 
 	// Preserve current cursor position before updating
 	currentCursor := t.Cursor()
@@ -157,6 +211,9 @@ func UpdatePortsTable(t table.Model, width, height int) table.Model {
 		// No rows, reset cursor
 		t.SetCursor(0)
 	}
+
+	// Ensure table remains focused
+	t.Focus()
 
 	return t
 }
@@ -264,7 +321,7 @@ func NewPortForwardForm(width int, formData *PortForwardForm) *huh.Form {
 
 // BuildListenAddress constructs the listen address from local port
 func BuildListenAddress(localPort string) string {
-	return net.JoinHostPort("127.0.0.1", localPort)
+	return net.JoinHostPort("0.0.0.0", localPort)
 }
 
 // BuildTargetAddress constructs the target address from remote address and port

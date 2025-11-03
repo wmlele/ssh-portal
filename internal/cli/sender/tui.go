@@ -2,6 +2,7 @@ package sender
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"strings"
 	"time"
@@ -74,9 +75,12 @@ func (m *senderTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if m.formData.LocalPort != "" && m.formData.RemoteAddr != "" && m.formData.RemotePort != "" {
 						listen := BuildListenAddress(m.formData.LocalPort)
 						target := BuildTargetAddress(m.formData.RemoteAddr, m.formData.RemotePort)
-						RegisterPortForward(listen, target)
-						// TODO: Start actual port forwarding here
-						// This requires access to the SSH client
+						id := RegisterPortForward(listen, target)
+						if id == "" {
+							// Port forward creation failed (SSH client may not be connected)
+							// Form will remain open to show validation/error state
+							log.Printf("Failed to create port forward - SSH client may not be connected")
+						}
 						m.showForm = false
 						m.portForm = nil
 						m.formData = PortForwardForm{}
@@ -139,6 +143,23 @@ func (m *senderTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.portForm = NewPortForwardForm(m.leftViewport.Width, &m.formData)
 				// Stop the automatic content update ticker when form is shown
 				return m, m.portForm.Init()
+			}
+		case "d":
+			// Delete selected port forward
+			if !m.showForm && m.ready {
+				if err := m.deleteSelectedPortForward(); err == nil {
+					// Update table content after deletion (maintains focus and cursor position)
+					m.updateTopContent()
+				}
+			}
+		default:
+			// Let table handle navigation keys (up/down) when it's focused
+			if !m.showForm && m.ready {
+				var tableCmd tea.Cmd
+				m.portsTable, tableCmd = m.portsTable.Update(msg)
+				if tableCmd != nil {
+					cmds = append(cmds, tableCmd)
+				}
 			}
 		}
 
@@ -222,51 +243,17 @@ func (m *senderTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	default:
-		// Handle form updates first if form is shown (give priority to form input)
+		// Delegate message to form when it's open
 		if m.showForm && m.portForm != nil {
-			var formCmd tea.Cmd
-			var updatedModel tea.Model
-			updatedModel, formCmd = m.portForm.Update(msg)
-			if updatedForm, ok := updatedModel.(*huh.Form); ok {
-				m.portForm = updatedForm
-
-				// Check if form was just completed
-				if m.portForm.State == huh.StateCompleted {
-					// Form is completed, create the port forward
-					if m.formData.LocalPort != "" && m.formData.RemoteAddr != "" && m.formData.RemotePort != "" {
-						listen := BuildListenAddress(m.formData.LocalPort)
-						target := BuildTargetAddress(m.formData.RemoteAddr, m.formData.RemotePort)
-						RegisterPortForward(listen, target)
-						// TODO: Start actual port forwarding here
-						// This requires access to the SSH client
-						m.showForm = false
-						m.portForm = nil
-						m.formData = PortForwardForm{}
-						m.updateTopContent()
-						// Restart ticker now that form is closed
-						cmds = append(cmds, tea.Tick(time.Millisecond*500, func(time.Time) tea.Msg {
-							return updateTopContentMsg{}
-						}))
-					}
-				}
-				// Update viewport content to show form changes (input, validation, etc.)
-				// This needs to happen so the form's current state is visible
-				// Bubble Tea will call View() which reads from the viewport
-				m.updateTopContent()
+			if cmd, handled := m.handleFormMessage(msg); handled {
+				return m, cmd
 			}
-			if formCmd != nil {
-				cmds = append(cmds, formCmd)
-			}
-			return m, tea.Batch(cmds...)
 		}
 
 		// Handle table and viewport updates (only when form is not shown)
+		// Note: Table navigation keys are handled in the KeyMsg case above
 		if m.ready && !m.showForm {
-			var tableCmd, leftCmd, rightCmd tea.Cmd
-			m.portsTable, tableCmd = m.portsTable.Update(msg)
-			if tableCmd != nil {
-				cmds = append(cmds, tableCmd)
-			}
+			var leftCmd, rightCmd tea.Cmd
 			m.leftViewport, leftCmd = m.leftViewport.Update(msg)
 			if leftCmd != nil {
 				cmds = append(cmds, leftCmd)
@@ -285,6 +272,83 @@ func (m *senderTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, tea.Batch(cmds...)
+}
+
+func (m *senderTUIModel) deleteSelectedPortForward() error {
+	if !m.ready {
+		return fmt.Errorf("not ready")
+	}
+
+	// Get the selected row from the table
+	selectedRow := m.portsTable.SelectedRow()
+	if len(selectedRow) < 2 {
+		return fmt.Errorf("invalid row selected")
+	}
+
+	listenAddr := selectedRow[0]
+	targetAddr := selectedRow[1]
+
+	// Find and delete the port forward matching these addresses
+	forwards := GetAllPortForwards()
+	for _, pf := range forwards {
+		if pf.Listen == listenAddr && pf.Target == targetAddr {
+			UnregisterPortForward(pf.ID)
+			return nil
+		}
+	}
+
+	return fmt.Errorf("port forward not found")
+}
+
+func (m *senderTUIModel) handleFormMessage(msg tea.Msg) (tea.Cmd, bool) {
+	// Route any message to the form when it is open
+	if !(m.showForm && m.portForm != nil) {
+		return nil, false
+	}
+
+	var cmds []tea.Cmd
+	var formCmd tea.Cmd
+	var updatedModel tea.Model
+
+	updatedModel, formCmd = m.portForm.Update(msg)
+	if updatedForm, ok := updatedModel.(*huh.Form); ok {
+		m.portForm = updatedForm
+
+		// Check if form was just completed
+		if m.portForm.State == huh.StateCompleted {
+			if m.formData.LocalPort != "" && m.formData.RemoteAddr != "" && m.formData.RemotePort != "" {
+				listen := BuildListenAddress(m.formData.LocalPort)
+				target := BuildTargetAddress(m.formData.RemoteAddr, m.formData.RemotePort)
+				id := RegisterPortForward(listen, target)
+				if id == "" {
+					// Port forward creation failed (SSH client may not be connected)
+					log.Printf("Failed to create port forward - SSH client may not be connected")
+				}
+				m.showForm = false
+				m.portForm = nil
+				m.formData = PortForwardForm{}
+				m.updateTopContent()
+				// Restart ticker now that form is closed
+				return tea.Tick(time.Millisecond*500, func(time.Time) tea.Msg {
+					return updateTopContentMsg{}
+				}), true
+			}
+		}
+
+		// Update viewport content to show form changes
+		m.updateTopContent()
+	}
+
+	if formCmd != nil {
+		cmds = append(cmds, formCmd)
+	}
+
+	if len(cmds) > 0 {
+		return tea.Batch(cmds...), true
+	}
+
+	// Handled with no additional commands
+	return nil, true
 }
 
 func (m *senderTUIModel) updateTopContent() {
