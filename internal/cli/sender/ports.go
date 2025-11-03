@@ -2,10 +2,13 @@ package sender
 
 import (
 	"fmt"
+	"net"
+	"strconv"
 	"sync"
 	"time"
 
 	"github.com/charmbracelet/bubbles/table"
+	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -132,11 +135,28 @@ func UpdatePortsTable(t table.Model, width, height int) table.Model {
 		rows = append(rows, table.Row{pf.Listen, pf.Target})
 	}
 
-	// Update table while preserving focus state and cursor position
+	// Preserve current cursor position before updating
+	currentCursor := t.Cursor()
+
+	// Update table
 	t.SetColumns(columns)
 	t.SetRows(rows)
 	t.SetWidth(width)
 	t.SetHeight(height)
+
+	// Restore cursor position, but clamp it to valid range
+	if len(rows) > 0 {
+		if currentCursor >= len(rows) {
+			currentCursor = len(rows) - 1
+		}
+		if currentCursor < 0 {
+			currentCursor = 0
+		}
+		t.SetCursor(currentCursor)
+	} else {
+		// No rows, reset cursor
+		t.SetCursor(0)
+	}
 
 	return t
 }
@@ -173,4 +193,84 @@ func RenderLeftPaneContent(width int, portsTable table.Model) string {
 	)
 
 	return content
+}
+
+// PortForwardForm holds the form data for creating a new port forward
+type PortForwardForm struct {
+	LocalPort  string
+	RemoteAddr string
+	RemotePort string
+}
+
+// NewPortForwardForm creates a new huh form for adding port forwards
+func NewPortForwardForm(width int, formData *PortForwardForm) *huh.Form {
+	form := huh.NewForm(
+		huh.NewGroup(
+			huh.NewInput().
+				Title("Local Port").
+				Description("Local port to listen on (e.g., 10022)").
+				Placeholder("10022").
+				Value(&formData.LocalPort).
+				Validate(func(s string) error {
+					if s == "" {
+						return fmt.Errorf("local port is required")
+					}
+					port, err := strconv.Atoi(s)
+					if err != nil {
+						return fmt.Errorf("invalid port number")
+					}
+					if port < 1 || port > 65535 {
+						return fmt.Errorf("port must be between 1 and 65535")
+					}
+					return nil
+				}),
+			huh.NewInput().
+				Title("Remote Address").
+				Description("Remote address to forward to (e.g., 127.0.0.1)").
+				Placeholder("127.0.0.1").
+				Value(&formData.RemoteAddr).
+				Validate(func(s string) error {
+					if s == "" {
+						return fmt.Errorf("remote address is required")
+					}
+					if net.ParseIP(s) == nil && s != "localhost" {
+						return fmt.Errorf("invalid IP address")
+					}
+					return nil
+				}),
+			huh.NewInput().
+				Title("Remote Port").
+				Description("Remote port to forward to (e.g., 22)").
+				Placeholder("22").
+				Value(&formData.RemotePort).
+				Validate(func(s string) error {
+					if s == "" {
+						return fmt.Errorf("remote port is required")
+					}
+					port, err := strconv.Atoi(s)
+					if err != nil {
+						return fmt.Errorf("invalid port number")
+					}
+					if port < 1 || port > 65535 {
+						return fmt.Errorf("port must be between 1 and 65535")
+					}
+					return nil
+				}),
+		),
+	).WithWidth(width)
+
+	return form
+}
+
+// BuildListenAddress constructs the listen address from local port
+func BuildListenAddress(localPort string) string {
+	return net.JoinHostPort("127.0.0.1", localPort)
+}
+
+// BuildTargetAddress constructs the target address from remote address and port
+func BuildTargetAddress(remoteAddr, remotePort string) string {
+	if remoteAddr == "localhost" {
+		remoteAddr = "127.0.0.1"
+	}
+	return net.JoinHostPort(remoteAddr, remotePort)
 }

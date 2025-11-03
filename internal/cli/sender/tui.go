@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
 
 	"ssh-portal/internal/cli/tui"
@@ -30,6 +31,10 @@ type senderTUIModel struct {
 	width         int
 	height        int
 	ready         bool
+	// Form state
+	showForm bool
+	portForm *huh.Form
+	formData PortForwardForm
 }
 
 func newSenderTUIModel(logWriter *tui.LogTailWriter, cancel context.CancelFunc) *senderTUIModel {
@@ -63,6 +68,45 @@ func (m *senderTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cancel()
 			}
 			return m, tea.Quit
+		case "n":
+			// Show form to create new port forward
+			if !m.showForm && m.ready {
+				m.showForm = true
+				m.formData = PortForwardForm{}
+				m.portForm = NewPortForwardForm(m.leftViewport.Width, &m.formData)
+				// Stop the automatic content update ticker when form is shown
+				return m, m.portForm.Init()
+			}
+		case "esc":
+			// Cancel form
+			if m.showForm {
+				m.showForm = false
+				m.portForm = nil
+				m.formData = PortForwardForm{}
+				m.updateTopContent()
+				// Restart the automatic content update ticker
+				return m, tea.Tick(time.Millisecond*500, func(time.Time) tea.Msg {
+					return updateTopContentMsg{}
+				})
+			}
+		case "enter":
+			// Submit form if shown and completed
+			if m.showForm && m.portForm != nil {
+				if m.portForm.State == huh.StateCompleted {
+					// Form is completed, create the port forward
+					if m.formData.LocalPort != "" && m.formData.RemoteAddr != "" && m.formData.RemotePort != "" {
+						listen := BuildListenAddress(m.formData.LocalPort)
+						target := BuildTargetAddress(m.formData.RemoteAddr, m.formData.RemotePort)
+						RegisterPortForward(listen, target)
+						// TODO: Start actual port forwarding here
+						// This requires access to the SSH client
+						m.showForm = false
+						m.portForm = nil
+						m.formData = PortForwardForm{}
+						m.updateTopContent()
+					}
+				}
+			}
 		}
 
 	case tea.WindowSizeMsg:
@@ -101,6 +145,15 @@ func (m *senderTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.leftViewport.Height = topHeight
 			m.rightViewport.Width = rightWidth
 			m.rightViewport.Height = topHeight
+			// Update form width if form is shown
+			if m.showForm && m.portForm != nil {
+				m.portForm = NewPortForwardForm(leftWidth, &m.formData)
+				// Re-initialize form with new width
+				formCmd := m.portForm.Init()
+				if formCmd != nil {
+					cmds = append(cmds, formCmd)
+				}
+			}
 		}
 
 		// Update top content with current data
@@ -125,14 +178,59 @@ func (m *senderTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case updateTopContentMsg:
-		m.updateTopContent()
-		return m, tea.Tick(time.Millisecond*500, func(time.Time) tea.Msg {
-			return updateTopContentMsg{}
-		})
+		// Only update content if form is not shown (form handles its own updates)
+		if !m.showForm {
+			m.updateTopContent()
+		}
+		// Continue ticker only if form is not shown
+		if !m.showForm {
+			return m, tea.Tick(time.Millisecond*500, func(time.Time) tea.Msg {
+				return updateTopContentMsg{}
+			})
+		}
+		// If form is shown, don't schedule another tick
+		return m, nil
 
 	default:
-		// Handle table and viewport updates
-		if m.ready {
+		// Handle form updates first if form is shown (give priority to form input)
+		if m.showForm && m.portForm != nil {
+			var formCmd tea.Cmd
+			var updatedModel tea.Model
+			updatedModel, formCmd = m.portForm.Update(msg)
+			if updatedForm, ok := updatedModel.(*huh.Form); ok {
+				m.portForm = updatedForm
+				// Check if form was just completed
+				if m.portForm.State == huh.StateCompleted {
+					// Form is completed, create the port forward
+					if m.formData.LocalPort != "" && m.formData.RemoteAddr != "" && m.formData.RemotePort != "" {
+						listen := BuildListenAddress(m.formData.LocalPort)
+						target := BuildTargetAddress(m.formData.RemoteAddr, m.formData.RemotePort)
+						RegisterPortForward(listen, target)
+						// TODO: Start actual port forwarding here
+						// This requires access to the SSH client
+						m.showForm = false
+						m.portForm = nil
+						m.formData = PortForwardForm{}
+						// Restart ticker now that form is closed
+						cmds = append(cmds, tea.Tick(time.Millisecond*500, func(time.Time) tea.Msg {
+							return updateTopContentMsg{}
+						}))
+					}
+				}
+				// Update content when form changes (but only if form is still active)
+				if m.showForm {
+					m.updateTopContent()
+				}
+			}
+			if formCmd != nil {
+				cmds = append(cmds, formCmd)
+			}
+			// Form consumes all messages when active, don't process other updates
+			return m, tea.Batch(cmds...)
+		}
+
+		// Handle table and viewport updates (only when form is not shown)
+		if m.ready && !m.showForm {
 			var tableCmd, leftCmd, rightCmd tea.Cmd
 			m.portsTable, tableCmd = m.portsTable.Update(msg)
 			if tableCmd != nil {
@@ -163,11 +261,40 @@ func (m *senderTUIModel) updateTopContent() {
 		return
 	}
 
-	// Update ports table with current data
-	m.portsTable = UpdatePortsTable(m.portsTable, m.portsTable.Width(), m.portsTable.Height())
-
-	// Render left pane: header + table
-	leftContent := RenderLeftPaneContent(m.leftViewport.Width, m.portsTable)
+	var leftContent string
+	if m.showForm && m.portForm != nil {
+		// Show form
+		titleStyle := lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("62")).
+			MarginBottom(1)
+		title := titleStyle.Render("New Port Forward")
+		formView := m.portForm.View()
+		helpText := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("240")).
+			MarginTop(1).
+			Render("Press Enter to submit, Esc to cancel")
+		leftContent = lipgloss.JoinVertical(
+			lipgloss.Left,
+			title,
+			formView,
+			helpText,
+		)
+	} else {
+		// Update ports table with current data
+		// Use viewport width instead of table width to ensure correct sizing
+		tableWidth := m.leftViewport.Width
+		if tableWidth < 20 {
+			tableWidth = 20
+		}
+		tableHeight := m.leftViewport.Height - 4 // Reserve space for title/info
+		if tableHeight < 3 {
+			tableHeight = 3
+		}
+		m.portsTable = UpdatePortsTable(m.portsTable, tableWidth, tableHeight)
+		// Render left pane: header + table
+		leftContent = RenderLeftPaneContent(m.leftViewport.Width, m.portsTable)
+	}
 	m.leftViewport.SetContent(leftContent)
 
 	// Render right side: current state information
