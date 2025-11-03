@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"os"
 	"strconv"
@@ -167,7 +166,6 @@ func readStrictGreeting(br *bufio.Reader) (Greeting, string, error) {
 			return "", fmt.Errorf("greeting too large")
 		}
 
-		log.Println("Read line:", s)
 		// keep raw as-is (including trailing \n)
 		write(strings.TrimRight(s, "\n"))
 		return strings.TrimRight(s, "\r\n"), nil

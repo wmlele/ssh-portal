@@ -1,7 +1,7 @@
 package sender
 
 import (
-	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"log"
@@ -15,23 +15,31 @@ import (
 
 // --- Main client ---
 
-func startSSHClient(relayHost string, relayPort int, code string) {
+func startSSHClient(ctx context.Context, relayHost string, relayPort int, code string) error {
 	// Build relay TCP address
 	relayTCP := net.JoinHostPort(relayHost, strconv.Itoa(relayPort))
+
+	SetStatus("connecting", "Connecting to relay...")
 
 	// Connect and perform protocol handshake
 	result, err := ConnectAndHandshake(relayTCP, code)
 	if err != nil {
-		log.Fatalf("handshake failed: %v", err)
+		SetStatus("failed", fmt.Sprintf("Handshake failed: %v", err))
+		log.Printf("handshake failed: %v", err)
+		return err
 	}
 	defer result.Conn.Close()
 
 	log.Println("SSH connection prepared", result.SSHConn)
 
+	SetStatus("connecting", "Establishing SSH connection...")
+
 	// Establish SSH connection
 	cc, chans, reqs, err := ssh.NewClientConn(result.SSHConn, "paired", result.ClientConfig)
 	if err != nil {
-		log.Fatalf("SSH connection failed: %v", err)
+		SetStatus("failed", fmt.Sprintf("SSH connection failed: %v", err))
+		log.Printf("SSH connection failed: %v", err)
+		return err
 	}
 
 	log.Println("SSH connection established")
@@ -39,41 +47,41 @@ func startSSHClient(relayHost string, relayPort int, code string) {
 	client := ssh.NewClient(cc, chans, reqs)
 	defer client.Close()
 
+	SetStatus("connected", "Port forwarding active on 127.0.0.1:10022 -> 127.0.0.1:22")
+
 	// Monitor connection for closure - check if client operations fail
 	go func() {
 		// Monitor by periodically checking connection state
 		// or by detecting when a client operation fails
 		ticker := time.NewTicker(2 * time.Second)
 		defer ticker.Stop()
-		for range ticker.C {
-			// Try to send a keepalive or check connection
-			_, _, err := client.SendRequest("keepalive@ssh-portal", false, nil)
-			if err != nil {
-				log.Printf("Receiver connection closed: %v", err)
+		for {
+			select {
+			case <-ctx.Done():
 				return
+			case <-ticker.C:
+				// Try to send a keepalive or check connection
+				_, _, err := client.SendRequest("keepalive@ssh-portal", false, nil)
+				if err != nil {
+					log.Printf("Receiver connection closed: %v", err)
+					SetStatus("failed", fmt.Sprintf("Connection closed: %v", err))
+					return
+				}
 			}
 		}
 	}()
 
 	// Start local port forwarding
-	go localForward(client, "127.0.0.1:10022", "127.0.0.1:22")
-	fmt.Println("Press 'q' and Enter to quit...")
+	go func() {
+		localForward(ctx, client, "127.0.0.1:10022", "127.0.0.1:22")
+	}()
 
-	// Wait for 'q' to quit
-	scanner := bufio.NewScanner(os.Stdin)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if line == "q" || line == "Q" {
-			break
-		}
-		fmt.Println("Press 'q' and Enter to quit...")
-	}
-	if err := scanner.Err(); err != nil {
-		log.Printf("error reading input: %v", err)
-	}
+	// Wait for context cancellation
+	<-ctx.Done()
+	return nil
 }
 
-func localForward(c *ssh.Client, listen, target string) {
+func localForward(ctx context.Context, c *ssh.Client, listen, target string) {
 	ln, err := net.Listen("tcp", listen)
 	if err != nil {
 		log.Println("listen:", err)
@@ -81,6 +89,12 @@ func localForward(c *ssh.Client, listen, target string) {
 	}
 	defer ln.Close()
 	log.Println("local forward listening on", listen, "->", target)
+
+	go func() {
+		<-ctx.Done()
+		ln.Close()
+	}()
+
 	for {
 		lc, err := ln.Accept()
 		if err != nil {
@@ -124,6 +138,36 @@ func Run(relayHost string, relayPort int, code string, interactive bool) error {
 	if code == "" {
 		return fmt.Errorf("code is required")
 	}
-	startSSHClient(relayHost, relayPort, code)
-	return nil
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if interactive {
+		// Start TUI
+		if err := startTUI(ctx, cancel); err != nil {
+			return fmt.Errorf("failed to start TUI: %w", err)
+		}
+	}
+
+	// Start SSH client in a goroutine
+	errChan := make(chan error, 1)
+	go func() {
+		errChan <- startSSHClient(ctx, relayHost, relayPort, code)
+	}()
+
+	// Wait for context cancellation or error
+	select {
+	case <-ctx.Done():
+		// TUI or user initiated shutdown
+		return nil
+	case err := <-errChan:
+		// Connection failed
+		if err != nil && !interactive {
+			// In non-interactive mode, return the error
+			return err
+		}
+		// In interactive mode, wait for user to quit
+		<-ctx.Done()
+		return nil
+	}
 }
