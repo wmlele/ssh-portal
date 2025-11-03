@@ -119,16 +119,32 @@ func handleSenderConnection(c net.Conn, code string, br *bufio.Reader) {
 		return
 	}
 
-	// Pair sender with receiver and splice connections
+	// Pair sender with receiver
 	// Note: rc is already a bufferedConn that preserves any SSH banner data
 	rc := inv.ReceiverConn
 	rcAddr := rc.RemoteAddr().String()
 	senderAddr := c.RemoteAddr().String()
 
+	log.Printf("[PAIR] successfully paired: sender=%s receiver=%s code=%s rid=%s", senderAddr, rcAddr, inv.Code, inv.RID)
+
+	// Send "ready" message to receiver with sender address
+	alg := "" // TODO: extract from receiver connection if available
+	readyMsg := ReadyMessage{
+		Msg:         "ready",
+		SenderAddr:  senderAddr,
+		Fingerprint: inv.ReceiverFP,
+		Exp:         inv.ExpiresAt.Unix(),
+		Alg:         alg,
+	}
+	if err := sendJSON(rc, readyMsg); err != nil {
+		log.Printf("[PAIR] failed to send ready to receiver: %v", err)
+		rc.Close()
+		c.Close()
+		return
+	}
+
 	// Remove from maps to make it one-shot
 	DeleteInvite(inv, "paired")
-
-	log.Printf("[PAIR] successfully paired: sender=%s receiver=%s code=%s rid=%s", senderAddr, rcAddr, inv.Code, inv.RID)
 
 	// Create splice record
 	spliceID := fmt.Sprintf("%d", time.Now().UnixNano())

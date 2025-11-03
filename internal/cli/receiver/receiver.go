@@ -65,7 +65,7 @@ func startSSHServer(relayHost string, relayPort int, enableSession bool) error {
 	}
 	fp := ssh.FingerprintSHA256(signer.PublicKey())
 
-	// 2) Connect to relay and perform protocol handshake
+	// 2) Connect to relay and perform protocol handshake (mint + hello)
 	connResult, mintResp, err := ConnectToRelay(relayHost, relayPort, fp)
 	if err != nil {
 		SetError(fmt.Sprintf("failed to connect to relay: %v", err))
@@ -74,14 +74,24 @@ func startSSHServer(relayHost string, relayPort int, enableSession bool) error {
 	}
 	defer connResult.Conn.Close()
 
-	// Store state for TUI
+	// 3) Store state for TUI immediately after mint/hello (before waiting for ready)
 	SetState(mintResp.Code, mintResp.RID, fp)
 
 	fmt.Println("Code:", mintResp.Code)
 	fmt.Println("RID :", mintResp.RID)
 	fmt.Println("FP  :", fp)
+	fmt.Println("Waiting for sender to connect...")
 
-	// 3) Setup SSH server over the connection
+	// 4) Wait for "ready" message (sender has connected)
+	ready, err := WaitForReady(connResult.Conn)
+	if err != nil {
+		SetError(fmt.Sprintf("failed to receive ready message: %v", err))
+		log.Printf("failed to receive ready message: %v", err)
+		return err
+	}
+	log.Printf("Received ready from relay: sender=%s fp=%s", ready.SenderAddr, ready.Fingerprint)
+
+	// 5) Setup SSH server over the connection (now ready for SSH handshake)
 	cfg := &ssh.ServerConfig{
 		PasswordCallback: func(c ssh.ConnMetadata, pass []byte) (*ssh.Permissions, error) {
 			expectedUsername := mintResp.Code

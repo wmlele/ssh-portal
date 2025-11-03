@@ -56,6 +56,15 @@ type MintOKResponse struct {
 	Exp  int64  `json:"exp"`
 }
 
+// ReadyMessage is sent to receiver when sender connects
+type ReadyMessage struct {
+	Msg         string `json:"msg"` // "ready"
+	SenderAddr  string `json:"sender_addr"`
+	Fingerprint string `json:"fp"`
+	Exp         int64  `json:"exp"`
+	Alg         string `json:"alg,omitempty"`
+}
+
 // ParseMessage reads the version line and a single JSON payload message.
 // It returns the parsed HelloMessage and a buffered reader preserving any extra bytes.
 func ParseMessage(c net.Conn) (*EndpointMessage, *bufio.Reader, error) {

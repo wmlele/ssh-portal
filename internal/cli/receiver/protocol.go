@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"strings"
 )
 
 // --- Protocol structures ---
@@ -32,11 +33,21 @@ type MintResponse struct {
 	Exp  int64  `json:"exp"`
 }
 
+// ReadyMessage is received from relay when sender connects
+type ReadyMessage struct {
+	Msg         string `json:"msg"` // "ready"
+	SenderAddr  string `json:"sender_addr"`
+	Fingerprint string `json:"fp"`
+	Exp         int64  `json:"exp"`
+	Alg         string `json:"alg,omitempty"`
+}
+
 // ConnectionResult holds the result of connecting to the relay
 type ConnectionResult struct {
-	Conn net.Conn
-	RID  string
-	Code string
+	Conn         net.Conn
+	RID          string
+	Code         string
+	ReadyMessage *ReadyMessage // populated after receiving "ready" from relay
 }
 
 // --- Protocol communication ---
@@ -107,5 +118,25 @@ func ConnectToRelay(relayHost string, relayPort int, receiverFP string) (*Connec
 		return nil, nil, fmt.Errorf("failed to send hello: %w", err)
 	}
 
-	return &ConnectionResult{Conn: conn, RID: m.RID, Code: m.Code}, &m, nil
+	// Return connection result without ready message - receiver will wait for it separately
+	return &ConnectionResult{
+		Conn:         conn,
+		RID:          m.RID,
+		Code:         m.Code,
+		ReadyMessage: nil, // Will be set after waiting for ready
+	}, &m, nil
+}
+
+// WaitForReady waits for and reads the "ready" message from the relay connection
+func WaitForReady(conn net.Conn) (*ReadyMessage, error) {
+	br := bufio.NewReader(conn)
+	readyLine, err := br.ReadString('\n')
+	if err != nil {
+		return nil, fmt.Errorf("failed to read ready message: %w", err)
+	}
+	var ready ReadyMessage
+	if err := json.Unmarshal([]byte(strings.TrimSpace(readyLine)), &ready); err != nil || ready.Msg != "ready" {
+		return nil, fmt.Errorf("bad ready message: %w", err)
+	}
+	return &ready, nil
 }
