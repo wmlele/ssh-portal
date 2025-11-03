@@ -283,7 +283,7 @@ func handleGlobal(reqs <-chan *ssh.Request, _ *ssh.ServerConn) {
 }
 
 // Run executes the receiver command
-func Run(relayHost string, relayPort int) error {
+func Run(relayHost string, relayPort int, interactive bool) error {
 	fmt.Println("receiver")
 	startSSHServer(relayHost, relayPort)
 	return nil

@@ -154,7 +154,7 @@ func spliceConnections(receiver, sender net.Conn, splice *Splice) {
 
 // Run executes the relay command
 // port is the TCP port number; HTTP will be served on port+1
-func Run(port int) error {
+func Run(port int, interactive bool) error {
 	tcpAddr := fmt.Sprintf(":%d", port)
 	httpAddr := fmt.Sprintf(":%d", port+1)
 

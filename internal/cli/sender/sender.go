@@ -95,7 +95,7 @@ func interactiveShell(c *ssh.Client) error {
 }
 
 // Run executes the sender command
-func Run(relayHost string, relayPort int, code string) error {
+func Run(relayHost string, relayPort int, code string, interactive bool) error {
 	if code == "" {
 		return fmt.Errorf("code is required")
 	}
