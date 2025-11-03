@@ -2,72 +2,32 @@ package relay
 
 import (
 	"fmt"
-	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/lipgloss"
-
-	"ssh-portal/internal/cli/tui"
 )
 
-// RenderStateView renders the invites and splices in a two-column layout
-func RenderStateView(width int) string {
-	// Header with software name and colored bar
-	header := tui.RenderTitleBar("Relay", width)
+// NewInvitesTable creates and returns a table.Model configured for invites
+func NewInvitesTable(width, height int) table.Model {
+	if width < 20 {
+		width = 20
+	}
+	if height < 3 {
+		height = 3
+	}
+	availableWidth := width - 4
+	// Three columns: Code, RID, Expires
+	colWidth := availableWidth / 3
 
-	invites := GetOutstandingInvites()
-	splices := GetActiveSplices()
-
-	// Format invites column
-	invitesCol := formatInvites(invites, width/2-2)
-
-	// Format splices column
-	splicesCol := formatSplices(splices, width/2-2)
-
-	// Join columns side by side
-	columns := lipgloss.JoinHorizontal(lipgloss.Top, invitesCol, splicesCol)
-
-	// Wrap to fit viewport width
-	wrapped := lipgloss.NewStyle().
-		Width(width).
-		Render(columns)
-
-	// Join header and content
-	return lipgloss.JoinVertical(lipgloss.Left, header, wrapped)
-}
-
-func formatInvites(invites []*Invite, width int) string {
-	titleStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("62")).
-		MarginBottom(1)
-
-	containerStyle := lipgloss.NewStyle().
-		Padding(1, 2).
-		Width(width)
-
-	title := titleStyle.Render("Outstanding Invites")
-
-	if len(invites) == 0 {
-		content := "No outstanding invites"
-		return containerStyle.Render(lipgloss.JoinVertical(lipgloss.Left, title, content))
+	columns := []table.Column{
+		{Title: "Code", Width: colWidth},
+		{Title: "RID", Width: colWidth},
+		{Title: "Expires", Width: colWidth},
 	}
 
-	// Table header
-	headerStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("240")).
-		Padding(0, 1)
-
-	header := headerStyle.Render("Code          RID           Expires")
-	divider := strings.Repeat("─", width-6)
-
-	var rows []string
-	rows = append(rows, title)
-	rows = append(rows, header)
-	rows = append(rows, divider)
-
-	rowStyle := lipgloss.NewStyle().Padding(0, 1)
+	rows := []table.Row{}
+	invites := GetOutstandingInvites()
 	for _, inv := range invites {
 		expiresIn := time.Until(inv.ExpiresAt)
 		expiresStr := expiresIn.Round(time.Second).String()
@@ -75,85 +35,269 @@ func formatInvites(invites []*Invite, width int) string {
 			expiresStr = expiresStr[:12]
 		}
 
-		// Truncate if too long
 		code := inv.Code
-		if len(code) > 12 {
-			code = code[:12]
+		if len(code) > colWidth {
+			code = code[:colWidth]
 		}
 		rid := inv.RID
-		if len(rid) > 12 {
-			rid = rid[:12]
+		if len(rid) > colWidth {
+			rid = rid[:colWidth]
 		}
 
-		row := fmt.Sprintf("%-12s %-12s %-12s", code, rid, expiresStr)
-		rows = append(rows, rowStyle.Render(row))
+		rows = append(rows, table.Row{code, rid, expiresStr})
 	}
 
-	content := strings.Join(rows, "\n")
-	return containerStyle.Render(content)
+	t := table.New(
+		table.WithColumns(columns),
+		table.WithRows(rows),
+		table.WithFocused(true),
+		table.WithHeight(height),
+		table.WithWidth(width),
+	)
+
+	s := table.DefaultStyles()
+	s.Header = s.Header.
+		BorderStyle(lipgloss.NormalBorder()).
+		BorderForeground(lipgloss.Color("240")).
+		BorderBottom(true).
+		Bold(true).
+		Foreground(lipgloss.Color("62"))
+	s.Selected = s.Selected.
+		Foreground(lipgloss.Color("230")).
+		Background(lipgloss.Color("62")).
+		Bold(false)
+	t.SetStyles(s)
+
+	return t
 }
 
-func formatSplices(splices []*Splice, width int) string {
+// UpdateInvitesTable updates the table with current invites data
+func UpdateInvitesTable(t table.Model, width, height int) table.Model {
+	if width < 20 {
+		width = 20
+	}
+	if height < 3 {
+		height = 3
+	}
+	availableWidth := width - 4
+	colWidth := availableWidth / 3
+
+	columns := []table.Column{
+		{Title: "Code", Width: colWidth},
+		{Title: "RID", Width: colWidth},
+		{Title: "Expires", Width: colWidth},
+	}
+
+	rows := []table.Row{}
+	invites := GetOutstandingInvites()
+	for _, inv := range invites {
+		expiresIn := time.Until(inv.ExpiresAt)
+		expiresStr := expiresIn.Round(time.Second).String()
+		if len(expiresStr) > 12 {
+			expiresStr = expiresStr[:12]
+		}
+
+		code := inv.Code
+		if len(code) > colWidth {
+			code = code[:colWidth]
+		}
+		rid := inv.RID
+		if len(rid) > colWidth {
+			rid = rid[:colWidth]
+		}
+
+		rows = append(rows, table.Row{code, rid, expiresStr})
+	}
+
+	t.SetColumns(columns)
+	t.SetRows(rows)
+	t.SetWidth(width)
+	t.SetHeight(height)
+
+	return t
+}
+
+// NewSplicesTable creates and returns a table.Model configured for splices
+func NewSplicesTable(width, height int) table.Model {
+	if width < 20 {
+		width = 20
+	}
+	if height < 3 {
+		height = 3
+	}
+	availableWidth := width - 4
+	// Four columns: Code, Up, Down, Sender
+	colWidth := availableWidth / 4
+
+	columns := []table.Column{
+		{Title: "Code", Width: colWidth},
+		{Title: "Up", Width: colWidth},
+		{Title: "Down", Width: colWidth},
+		{Title: "Sender", Width: colWidth},
+	}
+
+	rows := []table.Row{}
+	splices := GetActiveSplices()
+	for _, s := range splices {
+		bytesUpStr := formatBytes(s.BytesUp)
+		bytesDownStr := formatBytes(s.BytesDown)
+
+		code := s.Code
+		if len(code) > colWidth {
+			code = code[:colWidth]
+		}
+		up := bytesUpStr
+		if len(up) > colWidth {
+			up = up[:colWidth]
+		}
+		down := bytesDownStr
+		if len(down) > colWidth {
+			down = down[:colWidth]
+		}
+		sender := s.SenderAddr
+		if len(sender) > colWidth {
+			sender = sender[:colWidth]
+		}
+
+		rows = append(rows, table.Row{code, up, down, sender})
+	}
+
+	t := table.New(
+		table.WithColumns(columns),
+		table.WithRows(rows),
+		table.WithFocused(true),
+		table.WithHeight(height),
+		table.WithWidth(width),
+	)
+
+	s := table.DefaultStyles()
+	s.Header = s.Header.
+		BorderStyle(lipgloss.NormalBorder()).
+		BorderForeground(lipgloss.Color("240")).
+		BorderBottom(true).
+		Bold(true).
+		Foreground(lipgloss.Color("62"))
+	s.Selected = s.Selected.
+		Foreground(lipgloss.Color("230")).
+		Background(lipgloss.Color("62")).
+		Bold(false)
+	t.SetStyles(s)
+
+	return t
+}
+
+// UpdateSplicesTable updates the table with current splices data
+func UpdateSplicesTable(t table.Model, width, height int) table.Model {
+	if width < 20 {
+		width = 20
+	}
+	if height < 3 {
+		height = 3
+	}
+	availableWidth := width - 4
+	colWidth := availableWidth / 4
+
+	columns := []table.Column{
+		{Title: "Code", Width: colWidth},
+		{Title: "Up", Width: colWidth},
+		{Title: "Down", Width: colWidth},
+		{Title: "Sender", Width: colWidth},
+	}
+
+	rows := []table.Row{}
+	splices := GetActiveSplices()
+	for _, s := range splices {
+		bytesUpStr := formatBytes(s.BytesUp)
+		bytesDownStr := formatBytes(s.BytesDown)
+
+		code := s.Code
+		if len(code) > colWidth {
+			code = code[:colWidth]
+		}
+		up := bytesUpStr
+		if len(up) > colWidth {
+			up = up[:colWidth]
+		}
+		down := bytesDownStr
+		if len(down) > colWidth {
+			down = down[:colWidth]
+		}
+		sender := s.SenderAddr
+		if len(sender) > colWidth {
+			sender = sender[:colWidth]
+		}
+
+		rows = append(rows, table.Row{code, up, down, sender})
+	}
+
+	t.SetColumns(columns)
+	t.SetRows(rows)
+	t.SetWidth(width)
+	t.SetHeight(height)
+
+	return t
+}
+
+// RenderLeftPaneContent renders the invites table with header
+func RenderLeftPaneContent(width int, invitesTable table.Model) string {
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color("62")).
 		MarginBottom(1)
 
-	containerStyle := lipgloss.NewStyle().
-		Padding(1, 2).
-		Width(width)
+	infoStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("240")).
+		MarginBottom(1)
+
+	title := titleStyle.Render("Outstanding Invites")
+
+	invites := GetOutstandingInvites()
+	info := infoStyle.Render(fmt.Sprintf("Active: %d", len(invites)))
+
+	tableView := invitesTable.View()
+	if tableView == "" {
+		tableView = "  No outstanding invites"
+	}
+
+	content := lipgloss.JoinVertical(
+		lipgloss.Left,
+		title,
+		info,
+		tableView,
+	)
+
+	return content
+}
+
+// RenderRightPaneContent renders the splices table with header
+func RenderRightPaneContent(width int, splicesTable table.Model) string {
+	titleStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("62")).
+		MarginBottom(1)
+
+	infoStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("240")).
+		MarginBottom(1)
 
 	title := titleStyle.Render("Active Splices")
 
-	if len(splices) == 0 {
-		content := "No active splices"
-		return containerStyle.Render(lipgloss.JoinVertical(lipgloss.Left, title, content))
+	splices := GetActiveSplices()
+	info := infoStyle.Render(fmt.Sprintf("Active: %d", len(splices)))
+
+	tableView := splicesTable.View()
+	if tableView == "" {
+		tableView = "  No active splices"
 	}
 
-	// Table header
-	headerStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("240")).
-		Padding(0, 1)
+	content := lipgloss.JoinVertical(
+		lipgloss.Left,
+		title,
+		info,
+		tableView,
+	)
 
-	header := headerStyle.Render("Code          Up       Down     Sender")
-	divider := strings.Repeat("─", width-6)
-
-	var rows []string
-	rows = append(rows, title)
-	rows = append(rows, header)
-	rows = append(rows, divider)
-
-	rowStyle := lipgloss.NewStyle().Padding(0, 1)
-	for _, s := range splices {
-		bytesUpStr := formatBytes(s.BytesUp)
-		bytesDownStr := formatBytes(s.BytesDown)
-
-		// Truncate if too long
-		code := s.Code
-		if len(code) > 12 {
-			code = code[:12]
-		}
-		up := bytesUpStr
-		if len(up) > 8 {
-			up = up[:8]
-		}
-		down := bytesDownStr
-		if len(down) > 8 {
-			down = down[:8]
-		}
-		sender := s.SenderAddr
-		// Truncate sender address if too long
-		if len(sender) > 15 {
-			sender = sender[:15]
-		}
-
-		row := fmt.Sprintf("%-12s %-8s %-8s %-15s", code, up, down, sender)
-		rows = append(rows, rowStyle.Render(row))
-	}
-
-	content := strings.Join(rows, "\n")
-	return containerStyle.Render(content)
+	return content
 }
 
 func formatBytes(b int64) string {
