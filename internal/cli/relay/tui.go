@@ -174,9 +174,29 @@ func (m *relayTUIModel) updateTopContent() {
 		return
 	}
 
-	// Update tables with current data
-	m.invitesTable = UpdateInvitesTable(m.invitesTable, m.invitesTable.Width(), m.invitesTable.Height())
-	m.splicesTable = UpdateSplicesTable(m.splicesTable, m.splicesTable.Width(), m.splicesTable.Height())
+	// Update invites table with current data
+	// Use viewport width instead of table width to ensure correct sizing
+	invitesTableWidth := m.leftViewport.Width
+	if invitesTableWidth < 20 {
+		invitesTableWidth = 20
+	}
+	invitesTableHeight := m.leftViewport.Height - 4 // Reserve space for title/info
+	if invitesTableHeight < 3 {
+		invitesTableHeight = 3
+	}
+	m.invitesTable = UpdateInvitesTable(m.invitesTable, invitesTableWidth, invitesTableHeight)
+
+	// Update splices table with current data
+	// Use viewport width instead of table width to ensure correct sizing
+	splicesTableWidth := m.rightViewport.Width
+	if splicesTableWidth < 20 {
+		splicesTableWidth = 20
+	}
+	splicesTableHeight := m.rightViewport.Height - 4 // Reserve space for title/info
+	if splicesTableHeight < 3 {
+		splicesTableHeight = 3
+	}
+	m.splicesTable = UpdateSplicesTable(m.splicesTable, splicesTableWidth, splicesTableHeight)
 
 	// Render left pane: invites table
 	leftContent := RenderLeftPaneContent(m.leftViewport.Width, m.invitesTable)

@@ -17,12 +17,13 @@ func NewInvitesTable(width, height int) table.Model {
 		height = 3
 	}
 	availableWidth := width - 4
-	// Three columns: Code, RID, Expires
-	colWidth := availableWidth / 3
+	// Four columns: Code, RID, Receiver Addr, Expires
+	colWidth := availableWidth / 4
 
 	columns := []table.Column{
 		{Title: "Code", Width: colWidth},
 		{Title: "RID", Width: colWidth},
+		{Title: "Receiver Addr", Width: colWidth},
 		{Title: "Expires", Width: colWidth},
 	}
 
@@ -44,7 +45,16 @@ func NewInvitesTable(width, height int) table.Model {
 			rid = rid[:colWidth]
 		}
 
-		rows = append(rows, table.Row{code, rid, expiresStr})
+		// Get receiver address if receiver has connected
+		receiverAddr := "-"
+		if inv.ReceiverConn != nil {
+			receiverAddr = inv.ReceiverConn.RemoteAddr().String()
+			if len(receiverAddr) > colWidth {
+				receiverAddr = receiverAddr[:colWidth]
+			}
+		}
+
+		rows = append(rows, table.Row{code, rid, receiverAddr, expiresStr})
 	}
 
 	t := table.New(
@@ -80,11 +90,12 @@ func UpdateInvitesTable(t table.Model, width, height int) table.Model {
 		height = 3
 	}
 	availableWidth := width - 4
-	colWidth := availableWidth / 3
+	colWidth := availableWidth / 4
 
 	columns := []table.Column{
 		{Title: "Code", Width: colWidth},
 		{Title: "RID", Width: colWidth},
+		{Title: "Receiver Addr", Width: colWidth},
 		{Title: "Expires", Width: colWidth},
 	}
 
@@ -106,7 +117,16 @@ func UpdateInvitesTable(t table.Model, width, height int) table.Model {
 			rid = rid[:colWidth]
 		}
 
-		rows = append(rows, table.Row{code, rid, expiresStr})
+		// Get receiver address if receiver has connected
+		receiverAddr := "-"
+		if inv.ReceiverConn != nil {
+			receiverAddr = inv.ReceiverConn.RemoteAddr().String()
+			if len(receiverAddr) > colWidth {
+				receiverAddr = receiverAddr[:colWidth]
+			}
+		}
+
+		rows = append(rows, table.Row{code, rid, receiverAddr, expiresStr})
 	}
 
 	t.SetColumns(columns)
@@ -126,14 +146,15 @@ func NewSplicesTable(width, height int) table.Model {
 		height = 3
 	}
 	availableWidth := width - 4
-	// Four columns: Code, Up, Down, Sender
-	colWidth := availableWidth / 4
+	// Five columns: Code, Up, Down, Sender Addr, Receiver Addr
+	colWidth := availableWidth / 5
 
 	columns := []table.Column{
 		{Title: "Code", Width: colWidth},
 		{Title: "Up", Width: colWidth},
 		{Title: "Down", Width: colWidth},
-		{Title: "Sender", Width: colWidth},
+		{Title: "Sender Addr", Width: colWidth},
+		{Title: "Receiver Addr", Width: colWidth},
 	}
 
 	rows := []table.Row{}
@@ -154,12 +175,16 @@ func NewSplicesTable(width, height int) table.Model {
 		if len(down) > colWidth {
 			down = down[:colWidth]
 		}
-		sender := s.SenderAddr
-		if len(sender) > colWidth {
-			sender = sender[:colWidth]
+		senderAddr := s.SenderAddr
+		if len(senderAddr) > colWidth {
+			senderAddr = senderAddr[:colWidth]
+		}
+		receiverAddr := s.ReceiverAddr
+		if len(receiverAddr) > colWidth {
+			receiverAddr = receiverAddr[:colWidth]
 		}
 
-		rows = append(rows, table.Row{code, up, down, sender})
+		rows = append(rows, table.Row{code, up, down, senderAddr, receiverAddr})
 	}
 
 	t := table.New(
@@ -195,13 +220,14 @@ func UpdateSplicesTable(t table.Model, width, height int) table.Model {
 		height = 3
 	}
 	availableWidth := width - 4
-	colWidth := availableWidth / 4
+	colWidth := availableWidth / 5
 
 	columns := []table.Column{
 		{Title: "Code", Width: colWidth},
 		{Title: "Up", Width: colWidth},
 		{Title: "Down", Width: colWidth},
-		{Title: "Sender", Width: colWidth},
+		{Title: "Sender Addr", Width: colWidth},
+		{Title: "Receiver Addr", Width: colWidth},
 	}
 
 	rows := []table.Row{}
@@ -222,12 +248,16 @@ func UpdateSplicesTable(t table.Model, width, height int) table.Model {
 		if len(down) > colWidth {
 			down = down[:colWidth]
 		}
-		sender := s.SenderAddr
-		if len(sender) > colWidth {
-			sender = sender[:colWidth]
+		senderAddr := s.SenderAddr
+		if len(senderAddr) > colWidth {
+			senderAddr = senderAddr[:colWidth]
+		}
+		receiverAddr := s.ReceiverAddr
+		if len(receiverAddr) > colWidth {
+			receiverAddr = receiverAddr[:colWidth]
 		}
 
-		rows = append(rows, table.Row{code, up, down, sender})
+		rows = append(rows, table.Row{code, up, down, senderAddr, receiverAddr})
 	}
 
 	t.SetColumns(columns)
