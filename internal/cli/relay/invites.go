@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base32"
 	"encoding/json"
@@ -235,12 +236,24 @@ func handleMint(w http.ResponseWriter, r *http.Request) {
 }
 
 // StartHTTPServer starts the HTTP server for mint endpoint
-func StartHTTPServer(addr string) {
-	http.HandleFunc("/mint", handleMint)
+// Returns the http.Server for graceful shutdown
+func StartHTTPServer(ctx context.Context, addr string) *http.Server {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/mint", handleMint)
+	
+	server := &http.Server{
+		Addr:    addr,
+		Handler: mux,
+	}
+
 	log.Printf("relay HTTP on %s (POST /mint)", addr)
 	go func() {
-		log.Fatal(http.ListenAndServe(addr, nil))
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Printf("HTTP server error: %v", err)
+		}
 	}()
+
+	return server
 }
 
 func randB32(n int) string {

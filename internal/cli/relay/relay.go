@@ -2,28 +2,58 @@ package relay
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"log"
 	"net"
+	"sync"
 	"time"
 )
 
 // ====== TCP rendezvous/splice ======
-func tcpServe(addr string) error {
+func tcpServe(ctx context.Context, addr string) error {
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return err
 	}
+	defer ln.Close()
+
 	log.Printf("relay TCP listening on %s", addr)
-	for {
-		c, err := ln.Accept()
-		if err != nil {
-			log.Printf("[TCP] accept error: %v", err)
-			continue
+
+	// Handle accept in a goroutine to allow context cancellation
+	acceptDone := make(chan struct{})
+	go func() {
+		defer close(acceptDone)
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+					log.Printf("[TCP] accept error: %v", err)
+					continue
+				}
+			}
+			log.Printf("[TCP] new connection from %s", c.RemoteAddr())
+			go handleTCP(c)
 		}
-		log.Printf("[TCP] new connection from %s", c.RemoteAddr())
-		go handleTCP(c)
+	}()
+
+	// Close listener when context is cancelled
+	go func() {
+		<-ctx.Done()
+		ln.Close()
+	}()
+
+	// Wait for context cancellation or accept error
+	select {
+	case <-ctx.Done():
+		log.Printf("relay TCP server shutting down...")
+		return nil
+	case <-acceptDone:
+		return nil
 	}
 }
 
@@ -82,7 +112,7 @@ func handleSenderConnection(c net.Conn, code string, br *bufio.Reader) {
 	DeleteInvite(inv, "paired")
 
 	log.Printf("[PAIR] successfully paired: sender=%s receiver=%s code=%s rid=%s", senderAddr, rcAddr, inv.Code, inv.RID)
-	
+
 	// Create splice record
 	spliceID := fmt.Sprintf("%d", time.Now().UnixNano())
 	splice := &Splice{
@@ -94,17 +124,17 @@ func handleSenderConnection(c net.Conn, code string, br *bufio.Reader) {
 		ReceiverAddr: rcAddr,
 		CreatedAt:    time.Now(),
 	}
-	
+
 	// Register splice
 	spliceMu.Lock()
 	splices[spliceID] = splice
 	spliceMu.Unlock()
-	
+
 	// Call callback for new splice
 	if callbacks != nil && callbacks.OnNewSplice != nil {
 		callbacks.OnNewSplice(splice)
 	}
-	
+
 	log.Printf("[SPLICE] bridging sender=%s <-> receiver=%s", senderAddr, rcAddr)
 	spliceConnections(rc, c, splice) // closes both connections; rc is bufferedConn preserving SSH banner
 	log.Printf("[SPLICE] connection closed: sender=%s receiver=%s", senderAddr, rcAddr)
@@ -113,12 +143,12 @@ func handleSenderConnection(c net.Conn, code string, br *bufio.Reader) {
 func spliceConnections(receiver, sender net.Conn, splice *Splice) {
 	defer receiver.Close()
 	defer sender.Close()
-	
+
 	done := make(chan struct{}, 2)
 	var receiverBytes, senderBytes int64
 	receiverAddr := receiver.RemoteAddr().String()
 	senderAddr := sender.RemoteAddr().String()
-	
+
 	// receiver -> sender (upstream)
 	go func() {
 		n, _ := io.Copy(sender, receiver)
@@ -131,21 +161,21 @@ func spliceConnections(receiver, sender net.Conn, splice *Splice) {
 		senderBytes = n
 		done <- struct{}{}
 	}()
-	
+
 	<-done // wait for first direction
 	<-done // wait for second direction
-	
+
 	// Update splice stats and mark as closed
 	now := time.Now()
 	spliceMu.Lock()
-	splice.BytesUp = receiverBytes   // bytes from receiver to sender
-	splice.BytesDown = senderBytes   // bytes from sender to receiver
+	splice.BytesUp = receiverBytes // bytes from receiver to sender
+	splice.BytesDown = senderBytes // bytes from sender to receiver
 	splice.ClosedAt = &now
 	spliceMu.Unlock()
-	
+
 	log.Printf("[SPLICE] stats: %s <-> %s (%d bytes receiver->sender, %d bytes sender->receiver)",
 		receiverAddr, senderAddr, receiverBytes, senderBytes)
-	
+
 	// Call callback for closed splice
 	if callbacks != nil && callbacks.OnClosedSplice != nil {
 		callbacks.OnClosedSplice(splice)
@@ -158,8 +188,45 @@ func Run(port int, interactive bool) error {
 	tcpAddr := fmt.Sprintf(":%d", port)
 	httpAddr := fmt.Sprintf(":%d", port+1)
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	StartInviteCleanupLoop()
-	StartHTTPServer(httpAddr)
-	log.Fatal(tcpServe(tcpAddr))
+	httpServer := StartHTTPServer(ctx, httpAddr)
+
+	var wg sync.WaitGroup
+
+	// Start TCP server
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := tcpServe(ctx, tcpAddr); err != nil {
+			log.Printf("TCP server error: %v", err)
+			cancel() // Signal shutdown on error
+		}
+	}()
+
+	if interactive {
+		// Start TUI for interactive mode
+		logWriter := newLogTailWriter(maxLogLines)
+		if err := startTUI(ctx, cancel, logWriter); err != nil {
+			return fmt.Errorf("failed to start TUI: %w", err)
+		}
+	}
+
+	// Wait for shutdown signal or error
+	<-ctx.Done()
+
+	// Shutdown HTTP server
+	if httpServer != nil {
+		log.Printf("shutting down HTTP server...")
+		if err := httpServer.Shutdown(context.Background()); err != nil {
+			log.Printf("HTTP server shutdown error: %v", err)
+		}
+	}
+
+	// Wait for TCP server to finish
+	wg.Wait()
+	log.Printf("relay server stopped")
 	return nil
 }
