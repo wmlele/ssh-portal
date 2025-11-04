@@ -11,6 +11,15 @@ sender:
       remote:
         - bind: "127.0.0.1:2200"
           target: "127.0.0.1:22"
+    - name: "test2"
+      local: 
+        - bind: "127.0.0.1:10022"
+          target: "127.0.0.1:22"
+        - bind: "127.0.0.1:10025"
+          target: "127.0.0.1:22"
+      remote:
+        - bind: "127.0.0.1:2201"
+          target: "127.0.0.1:22"
           
 log:
   level: info

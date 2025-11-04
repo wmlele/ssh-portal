@@ -18,6 +18,7 @@ var (
 	senderKeepaliveTimeout string
 	senderIdentity         string
 	senderProfile          string
+	senderMenu             bool
 )
 
 var senderCmd = &cobra.Command{
@@ -30,6 +31,23 @@ var senderCmd = &cobra.Command{
 			var cfg sender.SenderConfig
 			if err := viper.UnmarshalKey("sender", &cfg); err == nil {
 				topLevel = &cfg
+			}
+		}
+
+		// Show menu if enabled and profiles exist
+		if senderMenu && topLevel != nil && len(topLevel.Profiles) > 0 && senderProfile == "" {
+			needsCode := senderCode == ""
+			result, err := sender.SelectProfile(topLevel.Profiles, needsCode)
+			if err != nil {
+				return fmt.Errorf("profile selection failed: %w", err)
+			}
+			if result != nil {
+				if result.Profile != "" {
+					senderProfile = result.Profile
+				}
+				if result.Code != "" {
+					senderCode = result.Code
+				}
 			}
 		}
 
@@ -108,6 +126,7 @@ func init() {
 	senderCmd.Flags().StringVar(&senderKeepaliveTimeout, "keepalive", "", "keepalive timeout (e.g., 30s, 1m) (overrides config)")
 	senderCmd.Flags().StringVar(&senderIdentity, "identity", "", "sender identity label to display at receiver (overrides config)")
 	senderCmd.Flags().StringVar(&senderProfile, "profile", "", "profile name to use from config file")
+	senderCmd.Flags().BoolVar(&senderMenu, "menu", true, "show profile selection menu if profiles exist")
 	_ = viper.BindPFlag("sender.code", senderCmd.Flags().Lookup("code"))
 	_ = viper.BindEnv("sender.code", "SSH_PORTAL_SENDER_CODE")
 }
