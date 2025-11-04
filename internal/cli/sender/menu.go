@@ -77,12 +77,12 @@ func newProfileMenuModel(profiles []Profile, needsCode bool) profileMenuModel {
             Enter: key.NewBinding(key.WithKeys("enter", " "), key.WithHelp("enter", "select/confirm")),
             Quit:  key.NewBinding(key.WithKeys("q", "ctrl+c", "esc"), key.WithHelp("q/esc", "cancel")),
         },
-        selected:   "",
-        code:       "",
-        quitting:   false,
-        needsCode:  needsCode,
-        formActive: needsCode, // When code is required, start with form focused so the cursor is visible
-    }
+		selected:   "",
+		code:       "",
+		quitting:   false,
+		needsCode:  needsCode,
+		formActive: false, // Start with list focused, user can tab to form
+	}
 
     if needsCode {
         pm.form = huh.NewForm(
@@ -121,14 +121,20 @@ func (m profileMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		availableWidth := msg.Width - h
 		availableHeight := msg.Height - v
 		// Allocate space: list gets most, form gets bottom portion if needed
+		// Reduce by 2 lines to ensure border is visible and account for spacing
 		if m.needsCode && m.form != nil {
-			listHeight := availableHeight - 8 // Reserve space for form
+			listHeight := availableHeight - 10 // Reserve space for form + 2 lines for borders/spacing
 			if listHeight < 5 {
 				listHeight = 5
 			}
 			m.list.SetSize(availableWidth, listHeight)
 		} else {
-			m.list.SetSize(availableWidth, availableHeight)
+			// Reduce by 2 lines even when no form to ensure border visibility
+			listHeight := availableHeight - 2
+			if listHeight < 5 {
+				listHeight = 5
+			}
+			m.list.SetSize(availableWidth, listHeight)
 		}
 		return m, nil
 
