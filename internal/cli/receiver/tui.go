@@ -86,11 +86,11 @@ func (m *receiverTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		bottomHeight := availableHeight - topHeight
 
 		// Split top section into left (info) and right (forwards table)
-		// Reserve space for divider (1 char) and borders
+		// Reserve space for divider (3 chars: space + divider + space) and borders
 		availableWidth := msg.Width - borderWidth
 		// Calculate widths based on percentage split
 		leftWidth := (availableWidth * leftSectionWidth) / 100
-		rightWidth := availableWidth - leftWidth - 1 // -1 for divider
+		rightWidth := availableWidth - leftWidth - 3 // -3 for divider and padding
 
 		// Compute table heights for two stacked tables in right pane
 		// Reserve ~2 lines for headers between tables
@@ -297,7 +297,7 @@ func (m *receiverTUIModel) View() string {
 		}
 
 		divider := dividerStyle.Render("│")
-		combinedLine := leftLine + divider + rightLine
+		combinedLine := leftLine + " " + divider + " " + rightLine
 		combinedLines = append(combinedLines, combinedLine)
 	}
 
