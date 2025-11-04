@@ -2,6 +2,7 @@ package relay
 
 import (
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/charmbracelet/bubbles/table"
@@ -29,6 +30,10 @@ func NewInvitesTable(width, height int) table.Model {
 
 	rows := []table.Row{}
 	invites := GetOutstandingInvites()
+	// Sort invites by expiration (earliest first)
+	sort.Slice(invites, func(i, j int) bool {
+		return invites[i].ExpiresAt.Before(invites[j].ExpiresAt)
+	})
 	for _, inv := range invites {
 		expiresIn := time.Until(inv.ExpiresAt)
 		expiresStr := expiresIn.Round(time.Second).String()
@@ -101,6 +106,10 @@ func UpdateInvitesTable(t table.Model, width, height int) table.Model {
 
 	rows := []table.Row{}
 	invites := GetOutstandingInvites()
+	// Sort invites by expiration (earliest first)
+	sort.Slice(invites, func(i, j int) bool {
+		return invites[i].ExpiresAt.Before(invites[j].ExpiresAt)
+	})
 	for _, inv := range invites {
 		expiresIn := time.Until(inv.ExpiresAt)
 		expiresStr := expiresIn.Round(time.Second).String()
@@ -159,6 +168,10 @@ func NewSplicesTable(width, height int) table.Model {
 
 	rows := []table.Row{}
 	splices := GetActiveSplices()
+	// Sort splices by code (alphabetically)
+	sort.Slice(splices, func(i, j int) bool {
+		return splices[i].Code < splices[j].Code
+	})
 	for _, s := range splices {
 		bytesUpStr := formatBytes(s.BytesUp)
 		bytesDownStr := formatBytes(s.BytesDown)
@@ -232,6 +245,10 @@ func UpdateSplicesTable(t table.Model, width, height int) table.Model {
 
 	rows := []table.Row{}
 	splices := GetActiveSplices()
+	// Sort splices by code (alphabetically)
+	sort.Slice(splices, func(i, j int) bool {
+		return splices[i].Code < splices[j].Code
+	})
 	for _, s := range splices {
 		bytesUpStr := formatBytes(s.BytesUp)
 		bytesDownStr := formatBytes(s.BytesDown)

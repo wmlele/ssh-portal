@@ -21,7 +21,14 @@ import (
 	"github.com/creack/pty"
 	"golang.org/x/crypto/ssh"
 
+	"errors"
 	"ssh-portal/internal/cli/usercode"
+)
+
+var (
+	// errConnectionClosed is returned when the SSH connection closes normally
+	// This signals that we should restart and reconnect
+	errConnectionClosed = errors.New("connection closed")
 )
 
 // DirectTCPIP represents an active direct-tcpip forwarding connection
@@ -81,7 +88,30 @@ func GetAllReverseTCPIPs() []*ReverseTCPIP {
 	return result
 }
 
-func startSSHServer(relayHost string, relayPort int, enableSession bool) error {
+// cleanupConnections closes all active direct-tcpip and reverse-tcpip connections
+func cleanupConnections() {
+	// Close all direct-tcpip connections
+	directTCPIPMu.Lock()
+	for _, dtcp := range directTCPIPs {
+		if dtcp.Channel != nil {
+			dtcp.Channel.Close()
+		}
+	}
+	directTCPIPs = make(map[string]*DirectTCPIP)
+	directTCPIPMu.Unlock()
+
+	// Close all reverse-tcpip listeners
+	reverseTCPIPMu.Lock()
+	for _, r := range reverseTCPIPs {
+		if r.Listener != nil {
+			r.Listener.Close()
+		}
+	}
+	reverseTCPIPs = make(map[string]*ReverseTCPIP)
+	reverseTCPIPMu.Unlock()
+}
+
+func startSSHServer(relayHost string, relayPort int, enableSession bool, interactive bool) error {
 	// 1) Generate host key (ephemeral; persist if you want TOFU)
 	_, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -104,7 +134,9 @@ func startSSHServer(relayHost string, relayPort int, enableSession bool) error {
 		log.Printf("failed to connect to relay: %v", err)
 		return err
 	}
-	defer connResult.Conn.Close()
+	relayConn := connResult.Conn
+	// Note: relayConn will be owned by sshConn after SSH handshake, so we don't defer close here
+	// We'll close it explicitly if we return before SSH is established
 
 	// 3) Generate receiver code and user code, then store state for TUI
 	localSecret, err := usercode.GenerateReceiverCode()
@@ -122,17 +154,21 @@ func startSSHServer(relayHost string, relayPort int, enableSession bool) error {
 	}
 
 	SetState(userCode, mintResp.Code, localSecret, mintResp.RID, fp)
-	fmt.Println("Code      :", userCode)
-	fmt.Println("RelayCode :", mintResp.Code)
-	fmt.Println("RID       :", mintResp.RID)
-	fmt.Println("FP        :", fp)
-	fmt.Println("Waiting for sender to connect...")
+	if !interactive {
+		fmt.Println("Code      :", userCode)
+		fmt.Println("RelayCode :", mintResp.Code)
+		fmt.Println("RID       :", mintResp.RID)
+		fmt.Println("FP        :", fp)
+		fmt.Println("Waiting for sender to connect...")
+	}
 
 	// 4) Wait for "ready" message (sender has connected)
-	ready, err := WaitForReady(connResult.Conn)
+	ready, err := WaitForReady(relayConn)
 	if err != nil {
 		SetError(fmt.Sprintf("failed to receive ready message: %v", err))
 		log.Printf("failed to receive ready message: %v", err)
+		ClearState()
+		relayConn.Close()
 		return err
 	}
 	// Build log message with identity if available
@@ -173,12 +209,14 @@ func startSSHServer(relayHost string, relayPort int, enableSession bool) error {
 	}
 	cfg.AddHostKey(signer)
 
-	sshConn, chans, reqs, err := ssh.NewServerConn(connResult.Conn, cfg)
+	sshConn, chans, reqs, err := ssh.NewServerConn(relayConn, cfg)
 	if err != nil {
 		SetError(fmt.Sprintf("SSH server connection failed: %v", err))
 		log.Printf("SSH server connection failed: %v", err)
+		relayConn.Close()
 		return err
 	}
+	// sshConn now owns relayConn, so closing sshConn will close relayConn
 	defer sshConn.Close()
 
 	state := GetState()
@@ -210,6 +248,7 @@ func startSSHServer(relayHost string, relayPort int, enableSession bool) error {
 			if time.Since(last) > keepaliveTimeout {
 				log.Printf("Keepalive timeout, sender connection appears dead, closing SSH connection")
 				SetError("Sender connection timeout")
+				// Close the connection to trigger channel loop exit
 				sshConn.Close()
 				return
 			}
@@ -219,7 +258,7 @@ func startSSHServer(relayHost string, relayPort int, enableSession bool) error {
 	// Handle global requests (remote-forward control and keepalive)
 	go handleGlobal(reqs, sshConn, keepaliveMu, &lastKeepalive)
 
-	// Handle channels
+	// Handle channels - when this loop exits, the connection is closed
 	for ch := range chans {
 		switch ch.ChannelType() {
 		case "session":
@@ -237,9 +276,16 @@ func startSSHServer(relayHost string, relayPort int, enableSession bool) error {
 			ch.Reject(ssh.UnknownChannelType, "unsupported")
 		}
 	}
-	// This should never be reached as the loop runs indefinitely
-	// but required for the function signature
-	return nil
+
+	// Channel loop exited - connection closed
+	log.Printf("SSH connection closed, cleaning up")
+
+	// Clean up all connections and state
+	cleanupConnections()
+	ClearState()
+
+	// sshConn.Close() is already deferred, which will close the underlying relayConn
+	return errConnectionClosed
 }
 
 // handleDirectTCPIP handles direct-tcpip channel requests (port forwarding)
@@ -569,11 +615,32 @@ func Run(relayHost string, relayPort int, interactive bool, session bool) error 
 		}
 	}
 
-	// Start SSH server in a goroutine (it runs indefinitely or until error)
+	// Start SSH server in a goroutine with restart loop
 	go func() {
-		if err := startSSHServer(relayHost, relayPort, session); err != nil {
-			// Error already logged and set in state view
-			log.Printf("SSH server failed to start, but keeping receiver running for manual quit")
+		for {
+			select {
+			case <-ctx.Done():
+				log.Printf("Context cancelled, stopping receiver")
+				return
+			default:
+				err := startSSHServer(relayHost, relayPort, session, interactive)
+				if err == nil {
+					// Should not happen, but if it does, exit
+					log.Printf("SSH server returned without error, exiting")
+					return
+				}
+
+				if err == errConnectionClosed {
+					// Connection closed - restart after a brief delay
+					log.Printf("Sender disconnected, restarting receiver in 1 second...")
+					time.Sleep(1 * time.Second)
+					continue
+				}
+
+				// Other errors - log and retry after delay
+				log.Printf("SSH server error: %v, retrying in 2 seconds...", err)
+				time.Sleep(2 * time.Second)
+			}
 		}
 	}()
 

@@ -91,6 +91,21 @@ func SetError(err string) {
 	currentState.Error = err
 }
 
+// ClearState clears all receiver state (for restart scenarios)
+func ClearState() {
+	currentState.mu.Lock()
+	defer currentState.mu.Unlock()
+	currentState.UserCode = ""
+	currentState.RelayCode = ""
+	currentState.LocalSecret = ""
+	currentState.RID = ""
+	currentState.FP = ""
+	currentState.SenderAddr = ""
+	currentState.SenderIdentity = ""
+	currentState.SSHEstablished = false
+	currentState.Error = ""
+}
+
 // NewForwardsTable creates and returns a table.Model configured for DirectTCPIP forwards
 func NewForwardsTable(width, height int) table.Model {
 	if width < 20 {

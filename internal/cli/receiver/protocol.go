@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net"
 	"strconv"
 	"strings"
@@ -35,18 +36,26 @@ type MintResponse struct {
 
 // ReadyMessage is received from relay when sender connects
 type ReadyMessage struct {
-	Msg         string `json:"msg"` // "ready"
-	SenderAddr  string `json:"sender_addr"`
-	Fingerprint string `json:"fp"`
-	Exp         int64  `json:"exp"`
-	Alg         string `json:"alg,omitempty"`
-    Sender      *SenderInfo `json:"sender,omitempty"`
+	Msg         string      `json:"msg"` // "ready"
+	SenderAddr  string      `json:"sender_addr"`
+	Fingerprint string      `json:"fp"`
+	Exp         int64       `json:"exp"`
+	Alg         string      `json:"alg,omitempty"`
+	Sender      *SenderInfo `json:"sender,omitempty"`
 }
 
 // SenderInfo mirrors metadata provided by sender via relay
 type SenderInfo struct {
-    Keepalive int    `json:"keepalive,omitempty"`
-    Identity  string `json:"identity,omitempty"`
+	Keepalive int    `json:"keepalive,omitempty"`
+	Identity  string `json:"identity,omitempty"`
+}
+
+// OKResponse is the response sent by relay after hello
+type OKResponse struct {
+	Msg string `json:"msg"` // "ok"
+	FP  string `json:"fp,omitempty"`
+	Exp int64  `json:"exp,omitempty"`
+	Alg string `json:"alg,omitempty"`
 }
 
 // ConnectionResult holds the result of connecting to the relay
@@ -120,7 +129,9 @@ func ConnectToRelay(relayHost string, relayPort int, receiverFP string) (*Connec
 	}
 
 	// 4) On same connection, send hello with RID to attach
-	if err := json.NewEncoder(conn).Encode(HelloMessage{Msg: "hello", Role: "receiver", RID: m.RID}); err != nil {
+	helloMsg := HelloMessage{Msg: "hello", Role: "receiver", RID: m.RID}
+	log.Printf("Sent hello to relay: role=receiver rid=%s", m.RID)
+	if err := json.NewEncoder(conn).Encode(helloMsg); err != nil {
 		conn.Close()
 		return nil, nil, fmt.Errorf("failed to send hello: %w", err)
 	}
