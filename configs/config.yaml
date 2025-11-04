@@ -3,6 +3,7 @@ sender:
   identity: "Lele Forzani"
   profiles:
     - name: "test"
+      description: "Test profile"
       local: 
         - bind: "127.0.0.1:10022"
           target: "127.0.0.1:22"
@@ -12,6 +13,7 @@ sender:
         - bind: "127.0.0.1:2200"
           target: "127.0.0.1:22"
     - name: "test2"
+      description: "Test profile 2"
       local: 
         - bind: "127.0.0.1:10022"
           target: "127.0.0.1:22"

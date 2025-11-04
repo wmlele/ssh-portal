@@ -20,20 +20,24 @@ type profileMenuItem struct {
 	id          string
 }
 
-func (p profileMenuItem) Title() string       { return zone.Mark(p.id, p.name) }
+func (p profileMenuItem) Title() string       { return p.name }
 func (p profileMenuItem) Description() string { return p.description }
-func (p profileMenuItem) FilterValue() string  { return zone.Mark(p.id, p.name) }
+func (p profileMenuItem) FilterValue() string { return p.name + " " + p.description }
+
+type codeFormData struct {
+	Code string
+}
 
 type profileMenuModel struct {
-	list      list.Model
-	form      *huh.Form
-	formCode  string // Store code value for form
-	keys      profileMenuKeyMap
-	selected  string
-	code      string
-	quitting  bool
-	needsCode bool
-	formActive bool
+	list         list.Model
+	form         *huh.Form
+	codeFormData codeFormData // Store code value for form
+	keys         profileMenuKeyMap
+	selected     string
+	code         string
+	quitting     bool
+	needsCode    bool
+	formActive   bool
 }
 
 type profileMenuKeyMap struct {
@@ -47,16 +51,16 @@ func (k profileMenuKeyMap) ShortHelp() []key.Binding {
 	return []key.Binding{k.Up, k.Down, k.Enter, k.Quit}
 }
 
-func newProfileMenuModel(profiles []Profile, needsCode bool) profileMenuModel {
+func newProfileMenuModel(profiles []Profile, needsCode bool) *profileMenuModel {
 	items := make([]list.Item, 0, len(profiles)+1)
-	
+
 	// Add "none" option first
 	items = append(items, profileMenuItem{
 		name:        "none",
 		description: "Use top-level configuration only (no profile)",
 		id:          "profile-none",
 	})
-	
+
 	// Add all profiles
 	for _, p := range profiles {
 		desc := p.Description
@@ -70,22 +74,22 @@ func newProfileMenuModel(profiles []Profile, needsCode bool) profileMenuModel {
 		})
 	}
 
-    l := list.New(items, list.NewDefaultDelegate(), 40, 14)
-    l.Title = "Select Profile"
-    l.SetShowStatusBar(false)
-    l.SetFilteringEnabled(false)
+	l := list.New(items, list.NewDefaultDelegate(), 40, 14)
+	l.Title = "Select Profile"
+	l.SetShowStatusBar(false)
+	l.SetFilteringEnabled(true)
 
-    // Build model first so we can bind form input directly to the model field
-    pm := profileMenuModel{
-        list:       l,
-        form:       nil,
-        formCode:   "",
-        keys: profileMenuKeyMap{
-            Up:    key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "move up")),
-            Down:  key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "move down")),
-            Enter: key.NewBinding(key.WithKeys("enter", " "), key.WithHelp("enter", "select/confirm")),
-            Quit:  key.NewBinding(key.WithKeys("q", "ctrl+c", "esc"), key.WithHelp("q/esc", "cancel")),
-        },
+	// Build model first so we can bind form input directly to the model field
+	pm := &profileMenuModel{
+		list:         l,
+		form:         nil,
+		codeFormData: codeFormData{Code: ""},
+		keys: profileMenuKeyMap{
+			Up:    key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "move up")),
+			Down:  key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "move down")),
+			Enter: key.NewBinding(key.WithKeys("enter", " "), key.WithHelp("enter", "select/confirm")),
+			Quit:  key.NewBinding(key.WithKeys("q", "ctrl+c", "esc"), key.WithHelp("q/esc", "cancel")),
+		},
 		selected:   "",
 		code:       "",
 		quitting:   false,
@@ -93,35 +97,35 @@ func newProfileMenuModel(profiles []Profile, needsCode bool) profileMenuModel {
 		formActive: false, // Start with list focused, user can tab to form
 	}
 
-    if needsCode {
-        pm.form = huh.NewForm(
-            huh.NewGroup(
-                huh.NewInput().
-                    Title("Connection Code").
-                    Description("Enter the connection code").
-                    Placeholder("series-spell-lava-then-038-8307").
-                    Value(&pm.formCode).
-                    Validate(func(s string) error {
-                        if s == "" {
-                            return fmt.Errorf("code is required")
-                        }
-                        return nil
-                    }),
-            ),
-        ).WithWidth(80) // Wider form to ensure input field is visible
-    }
+	if needsCode {
+		pm.form = huh.NewForm(
+			huh.NewGroup(
+				huh.NewInput().
+					Title("Connection Code").
+					Description("Enter the connection code").
+					Placeholder("series-spell-lava-then-038-8307").
+					Value(&pm.codeFormData.Code).
+					Validate(func(s string) error {
+						if s == "" {
+							return fmt.Errorf("code is required")
+						}
+						return nil
+					}),
+			),
+		).WithWidth(80)
+	}
 
-    return pm
+	return pm
 }
 
-func (m profileMenuModel) Init() tea.Cmd {
+func (m *profileMenuModel) Init() tea.Cmd {
 	if m.form != nil {
 		return m.form.Init()
 	}
 	return nil
 }
 
-func (m profileMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m *profileMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
 	switch msg := msg.(type) {
@@ -187,33 +191,51 @@ func (m profileMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-    case tea.KeyMsg:
-        // Global quit handling regardless of focus
-        if key.Matches(msg, m.keys.Quit) || msg.String() == "esc" || msg.String() == "ctrl+c" {
-            m.quitting = true
-            return m, tea.Quit
-        }
+	case tea.KeyMsg:
+		// Global quit handling regardless of focus
+		if key.Matches(msg, m.keys.Quit) || msg.String() == "esc" || msg.String() == "ctrl+c" {
+			m.quitting = true
+			return m, tea.Quit
+		}
+		// If list is filtering, let it handle all key messages first
+		if m.list.FilterState() == list.Filtering {
+			var cmd tea.Cmd
+			m.list, cmd = m.list.Update(msg)
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+			return m, tea.Batch(cmds...)
+		}
 		// If form is active, handle form first
 		if m.form != nil && m.formActive {
+			// Handle tab to switch between list and form (before form update)
+			if msg.String() == "tab" {
+				m.formActive = false
+				return m, nil
+			}
+
 			form, cmd := m.form.Update(msg)
 			if f, ok := form.(*huh.Form); ok {
 				m.form = f
 				cmds = append(cmds, cmd)
 			}
-			// If form is complete, check if we have profile (or "none") and code
+
+			fmt.Println("Form updated, form state:", m.form.State, "code:", m.codeFormData.Code)
+
+			// After form update, update code value from form
 			if m.form.State == huh.StateCompleted {
-				m.code = m.formCode
-				// If we have a profile selected (or "none"), we're done
-				if m.selected != "" {
+				m.code = m.codeFormData.Code
+			}
+
+			// If Enter was pressed, check if we can proceed
+			if msg.String() == "enter" {
+				// If form is complete and we have both profile and code, proceed
+				if m.form.State == huh.StateCompleted && m.selected != "" && m.codeFormData.Code != "" {
+					m.code = m.codeFormData.Code
 					return m, tea.Quit
 				}
-				// Form complete but no profile selected - wait for profile selection
 			}
-			// Handle tab to switch between list and form
-			if msg.String() == "tab" {
-				m.formActive = false
-				return m, nil
-			}
+
 			return m, tea.Batch(cmds...)
 		}
 
@@ -223,28 +245,23 @@ func (m profileMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.quitting = true
 			return m, tea.Quit
 		case key.Matches(msg, m.keys.Enter):
-			if m.formActive && m.form != nil {
-				// If form is active and Enter is pressed, check if form is complete
-				if m.form.State == huh.StateCompleted {
-					if m.selected != "" {
-						m.code = m.formCode
-						return m, tea.Quit
-					}
-				}
-			} else if selected := m.list.SelectedItem(); selected != nil {
-				if item, ok := selected.(profileMenuItem); ok {
-					m.selected = item.name
-					if m.needsCode && m.form != nil {
-						// If code is needed, check if form is already filled
-						if m.form.State == huh.StateCompleted && m.formCode != "" {
-							m.code = m.formCode
+			// Enter handling for list (when form is not active)
+			if !m.formActive {
+				if selected := m.list.SelectedItem(); selected != nil {
+					if item, ok := selected.(profileMenuItem); ok {
+						m.selected = item.name
+						if m.needsCode && m.form != nil {
+							// If code is needed, check if form is already filled
+							if m.form.State == huh.StateCompleted && m.codeFormData.Code != "" {
+								m.code = m.codeFormData.Code
+								return m, tea.Quit
+							}
+							// Otherwise switch to form for code input
+							m.formActive = true
+							cmds = append(cmds, m.form.Init())
+						} else {
 							return m, tea.Quit
 						}
-						// Otherwise switch to form for code input
-						m.formActive = true
-						cmds = append(cmds, m.form.Init())
-					} else {
-						return m, tea.Quit
 					}
 				}
 			}
@@ -265,7 +282,7 @@ func (m profileMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-func (m profileMenuModel) View() string {
+func (m *profileMenuModel) View() string {
 	if m.quitting && m.selected == "" {
 		return menuDocStyle.Render("\n\nCancelled.\n")
 	}
@@ -340,7 +357,7 @@ func SelectProfile(profiles []Profile, needsCode bool) (*SelectProfileResult, er
 		return nil, err
 	}
 
-	if m, ok := finalModel.(profileMenuModel); ok {
+	if m, ok := finalModel.(*profileMenuModel); ok {
 		if m.quitting && (m.selected == "" && m.code == "") {
 			fmt.Fprintf(os.Stderr, "Profile selection cancelled\n")
 			os.Exit(1)
@@ -363,4 +380,3 @@ func SelectProfile(profiles []Profile, needsCode bool) (*SelectProfileResult, er
 
 	return nil, fmt.Errorf("unexpected error in profile selection")
 }
-
