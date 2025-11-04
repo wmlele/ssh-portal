@@ -48,59 +48,61 @@ func (k profileMenuKeyMap) ShortHelp() []key.Binding {
 }
 
 func newProfileMenuModel(profiles []Profile, needsCode bool) profileMenuModel {
-	items := make([]list.Item, 0, len(profiles))
-	for _, p := range profiles {
-		desc := p.Description
-		if desc == "" {
-			desc = fmt.Sprintf("Relay: %s", p.Relay)
-		}
-		items = append(items, profileMenuItem{
-			name:        p.Name,
-			description: desc,
-			id:          fmt.Sprintf("profile-%s", p.Name),
-		})
-	}
+    items := make([]list.Item, 0, len(profiles))
+    for _, p := range profiles {
+        desc := p.Description
+        if desc == "" {
+            desc = fmt.Sprintf("Relay: %s", p.Relay)
+        }
+        items = append(items, profileMenuItem{
+            name:        p.Name,
+            description: desc,
+            id:          fmt.Sprintf("profile-%s", p.Name),
+        })
+    }
 
-	l := list.New(items, list.NewDefaultDelegate(), 40, 14)
-	l.Title = "Select Profile"
-	l.SetShowStatusBar(false)
-	l.SetFilteringEnabled(false)
+    l := list.New(items, list.NewDefaultDelegate(), 40, 14)
+    l.Title = "Select Profile"
+    l.SetShowStatusBar(false)
+    l.SetFilteringEnabled(false)
 
-	var form *huh.Form
-	formCode := ""
-	if needsCode {
-		form = huh.NewForm(
-			huh.NewGroup(
-				huh.NewInput().
-					Title("Connection Code").
-					Description("Enter the connection code (BIP39 format)").
-					Value(&formCode).
-					Validate(func(s string) error {
-						if s == "" {
-							return fmt.Errorf("code is required")
-						}
-						return nil
-					}),
-			),
-		).WithWidth(50)
-	}
+    // Build model first so we can bind form input directly to the model field
+    pm := profileMenuModel{
+        list:       l,
+        form:       nil,
+        formCode:   "",
+        keys: profileMenuKeyMap{
+            Up:    key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "move up")),
+            Down:  key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "move down")),
+            Enter: key.NewBinding(key.WithKeys("enter", " "), key.WithHelp("enter", "select/confirm")),
+            Quit:  key.NewBinding(key.WithKeys("q", "ctrl+c", "esc"), key.WithHelp("q/esc", "cancel")),
+        },
+        selected:   "",
+        code:       "",
+        quitting:   false,
+        needsCode:  needsCode,
+        formActive: needsCode, // When code is required, start with form focused so the cursor is visible
+    }
 
-	return profileMenuModel{
-		list:       l,
-		form:       form,
-		formCode:   formCode,
-		keys: profileMenuKeyMap{
-			Up:    key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "move up")),
-			Down:  key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "move down")),
-			Enter: key.NewBinding(key.WithKeys("enter", " "), key.WithHelp("enter", "select/confirm")),
-			Quit:  key.NewBinding(key.WithKeys("q", "ctrl+c", "esc"), key.WithHelp("q/esc", "cancel")),
-		},
-		selected:   "",
-		code:       "",
-		quitting:   false,
-		needsCode:  needsCode,
-		formActive: false, // Start with list active, user can tab to form
-	}
+    if needsCode {
+        pm.form = huh.NewForm(
+            huh.NewGroup(
+                huh.NewInput().
+                    Title("Connection Code").
+                    Description("Enter the connection code (eg: series-spell-lava-then-038-8307)").
+                    Placeholder("series-spell-lava-then-038-8307").
+                    Value(&pm.formCode).
+                    Validate(func(s string) error {
+                        if s == "" {
+                            return fmt.Errorf("code is required")
+                        }
+                        return nil
+                    }),
+            ),
+        ).WithWidth(50)
+    }
+
+    return pm
 }
 
 func (m profileMenuModel) Init() tea.Cmd {
@@ -115,17 +117,18 @@ func (m profileMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		h, _ := menuDocStyle.GetFrameSize()
-		availableHeight := msg.Height - h
+		h, v := menuDocStyle.GetFrameSize()
+		availableWidth := msg.Width - h
+		availableHeight := msg.Height - v
 		// Allocate space: list gets most, form gets bottom portion if needed
 		if m.needsCode && m.form != nil {
 			listHeight := availableHeight - 8 // Reserve space for form
 			if listHeight < 5 {
 				listHeight = 5
 			}
-			m.list.SetSize(msg.Width-h, listHeight)
+			m.list.SetSize(availableWidth, listHeight)
 		} else {
-			m.list.SetSize(msg.Width-h, availableHeight)
+			m.list.SetSize(availableWidth, availableHeight)
 		}
 		return m, nil
 
@@ -162,7 +165,12 @@ func (m profileMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-	case tea.KeyMsg:
+    case tea.KeyMsg:
+        // Global quit handling regardless of focus
+        if key.Matches(msg, m.keys.Quit) || msg.String() == "esc" || msg.String() == "ctrl+c" {
+            m.quitting = true
+            return m, tea.Quit
+        }
 		// If form is active, handle form first
 		if m.form != nil && m.formActive {
 			form, cmd := m.form.Update(msg)
@@ -239,13 +247,50 @@ func (m profileMenuModel) View() string {
 		return menuDocStyle.Render("\n\nCancelled.\n")
 	}
 
+	// Get terminal width from list (it should have been set via WindowSizeMsg)
+	width := m.list.Width()
+	if width == 0 {
+		width = 80 // fallback
+	}
+
+	// Base border style for focused view - colored border
+	focusBorderStyle := lipgloss.NewStyle().
+		Border(lipgloss.NormalBorder()).
+		BorderForeground(lipgloss.Color("201")).
+		Padding(0, 1).
+		Width(width)
+
+	// Unfocused border style - invisible border (same size, uses HiddenBorder)
+	unfocusBorderStyle := lipgloss.NewStyle().
+		Border(lipgloss.HiddenBorder()).
+		Padding(0, 1).
+		Width(width)
+
 	var views []string
-	views = append(views, m.list.View())
+
+	// Render list with border
+	listView := m.list.View()
+	if m.form != nil && m.formActive {
+		// List is not focused
+		views = append(views, unfocusBorderStyle.Render(listView))
+	} else {
+		// List is focused
+		views = append(views, focusBorderStyle.Render(listView))
+	}
 
 	// Always show form below if code is needed
 	if m.form != nil {
 		formView := m.form.View()
-		views = append(views, "\n"+formView)
+		if m.formActive {
+			// Form is focused
+			views = append(views, focusBorderStyle.Render(formView))
+		} else {
+			// Form is not focused
+			views = append(views, unfocusBorderStyle.Render(formView))
+		}
+		// Help hint
+		hint := lipgloss.NewStyle().Faint(true).Render("(tab to switch focus between list and code form)")
+		views = append(views, "", hint)
 	}
 
 	return zone.Scan(menuDocStyle.Render(lipgloss.JoinVertical(lipgloss.Left, views...)))
