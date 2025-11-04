@@ -20,6 +20,7 @@ type ReceiverState struct {
 	RID            string
 	FP             string
 	SenderAddr     string // Sender address from ready message
+	SenderIdentity string // Sender identity from ready message
 	SSHEstablished bool   // Whether SSH connection is established
 	Error          string
 }
@@ -37,6 +38,7 @@ func GetState() *ReceiverState {
 		RID:            currentState.RID,
 		FP:             currentState.FP,
 		SenderAddr:     currentState.SenderAddr,
+		SenderIdentity: currentState.SenderIdentity,
 		SSHEstablished: currentState.SSHEstablished,
 		Error:          currentState.Error,
 	}
@@ -66,6 +68,13 @@ func SetSenderAddr(addr string) {
 	currentState.mu.Lock()
 	defer currentState.mu.Unlock()
 	currentState.SenderAddr = addr
+}
+
+// SetSenderIdentity stores the sender identity from the ready message
+func SetSenderIdentity(identity string) {
+	currentState.mu.Lock()
+	defer currentState.mu.Unlock()
+	currentState.SenderIdentity = identity
 }
 
 // SetSSHEstablished marks the SSH connection as established
@@ -239,8 +248,13 @@ func RenderLeftPaneContent(width int, sp spinner.Model) string {
 		if !state.SSHEstablished {
 			spinnerView := sp.View()
 			content += "\n\n" + spinnerView + " Waiting for SSH..."
-		} else if state.SenderAddr != "" {
-			content += "\n\nConnected to: " + state.SenderAddr
+		} else {
+			if state.SenderIdentity != "" {
+				content += "\n\nIdentity:  " + state.SenderIdentity
+			}
+			if state.SenderAddr != "" {
+				content += "\nConnected to: " + state.SenderAddr
+			}
 		}
 	}
 

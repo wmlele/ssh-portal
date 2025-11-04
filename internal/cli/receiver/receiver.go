@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -128,16 +129,29 @@ func startSSHServer(relayHost string, relayPort int, enableSession bool) error {
 	fmt.Println("Waiting for sender to connect...")
 
 	// 4) Wait for "ready" message (sender has connected)
-    ready, err := WaitForReady(connResult.Conn)
+	ready, err := WaitForReady(connResult.Conn)
 	if err != nil {
 		SetError(fmt.Sprintf("failed to receive ready message: %v", err))
 		log.Printf("failed to receive ready message: %v", err)
 		return err
 	}
-    log.Printf("Received ready from relay: sender=%s fp=%s", ready.SenderAddr, ready.Fingerprint)
-    if ready.Sender != nil && ready.Sender.Identity != "" {
-        fmt.Println("Identity  :", ready.Sender.Identity)
-    }
+	// Build log message with identity if available
+	logMsg := fmt.Sprintf("Received ready from relay: sender=%s fp=%s", ready.SenderAddr, ready.Fingerprint)
+	if ready.Sender != nil && ready.Sender.Identity != "" {
+		// Decode base64 identity
+		decodedIdentity, err := base64.StdEncoding.DecodeString(ready.Sender.Identity)
+		if err != nil {
+			log.Printf("Failed to decode sender identity: %v", err)
+			// Use encoded value as fallback
+			SetSenderIdentity(ready.Sender.Identity)
+			logMsg += fmt.Sprintf(" identity=<decode-error>")
+		} else {
+			identity := string(decodedIdentity)
+			SetSenderIdentity(identity)
+			logMsg += fmt.Sprintf(" identity=%s", identity)
+		}
+	}
+	log.Printf(logMsg)
 	SetSenderAddr(ready.SenderAddr)
 
 	// 5) Setup SSH server over the connection (now ready for SSH handshake)

@@ -2,6 +2,7 @@ package sender
 
 import (
 	"bufio"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -78,12 +79,17 @@ func ConnectAndHandshake(relayAddr, code string, senderKASeconds int, senderIden
 		sock.Close()
 		return nil, fmt.Errorf("send version: %w", err)
 	}
-    hello := JSONHello{Msg: "hello", Role: "sender", Code: relayCode}
-    // Attach optional sender metadata
-    if senderKASeconds > 0 || senderIdentity != "" {
-        hello.Sender = &SenderInfo{Keepalive: senderKASeconds, Identity: senderIdentity}
-    }
-    if err := json.NewEncoder(sock).Encode(hello); err != nil {
+	hello := JSONHello{Msg: "hello", Role: "sender", Code: relayCode}
+	// Attach optional sender metadata
+	if senderKASeconds > 0 || senderIdentity != "" {
+		// Encode identity as base64 to avoid JSON issues with special characters
+		encodedIdentity := ""
+		if senderIdentity != "" {
+			encodedIdentity = base64.StdEncoding.EncodeToString([]byte(senderIdentity))
+		}
+		hello.Sender = &SenderInfo{Keepalive: senderKASeconds, Identity: encodedIdentity}
+	}
+	if err := json.NewEncoder(sock).Encode(hello); err != nil {
 		sock.Close()
 		return nil, fmt.Errorf("send hello: %w", err)
 	}
