@@ -160,6 +160,12 @@ func startSSHServer(relayHost string, relayPort int, enableSession bool) error {
 			expectedUsername := mintResp.Code
 			expectedPassword := fullCode
 			if c.User() != expectedUsername || string(pass) != expectedPassword {
+				// Log when sender connects but fails authentication
+				senderAddr := ready.SenderAddr
+				if senderAddr == "" {
+					senderAddr = c.RemoteAddr().String()
+				}
+				log.Printf("Sender connected but failed password authentication: sender=%s username=%s", senderAddr, c.User())
 				return nil, fmt.Errorf("invalid credentials")
 			}
 			return nil, nil
@@ -183,11 +189,11 @@ func startSSHServer(relayHost string, relayPort int, enableSession bool) error {
 	log.Printf("SSH connection established with sender: %s", senderAddr)
 	SetSSHEstablished()
 
-    // Handle keepalive requests and monitor connection health
-    keepaliveTimeout := 30 * time.Second
-    if ready.Sender != nil && ready.Sender.Keepalive > 0 {
-        keepaliveTimeout = time.Duration(ready.Sender.Keepalive) * time.Second
-    }
+	// Handle keepalive requests and monitor connection health
+	keepaliveTimeout := 30 * time.Second
+	if ready.Sender != nil && ready.Sender.Keepalive > 0 {
+		keepaliveTimeout = time.Duration(ready.Sender.Keepalive) * time.Second
+	}
 	lastKeepalive := time.Now()
 	keepaliveMu := &sync.Mutex{}
 
