@@ -30,14 +30,15 @@ type activeForward struct {
 
 // --- Main client ---
 
-func startSSHClient(ctx context.Context, relayHost string, relayPort int, code string, keepaliveTimeout time.Duration) error {
+func startSSHClient(ctx context.Context, relayHost string, relayPort int, code string, keepaliveTimeout time.Duration, identity string) error {
 	// Build relay TCP address
 	relayTCP := net.JoinHostPort(relayHost, strconv.Itoa(relayPort))
 
 	SetStatus("connecting", "Connecting to relay...")
 
 	// Connect and perform protocol handshake
-	result, err := ConnectAndHandshake(relayTCP, code)
+    // Provide hello metadata: keepalive seconds and optional identity
+    result, err := ConnectAndHandshake(relayTCP, code, int(keepaliveTimeout/time.Second), identity)
 	if err != nil {
 		SetStatus("failed", fmt.Sprintf("Handshake failed: %v", err))
 		log.Printf("handshake failed: %v", err)
@@ -300,7 +301,7 @@ func interactiveShell(c *ssh.Client) error {
 }
 
 // Run executes the sender command
-func Run(relayHost string, relayPort int, code string, interactive bool, keepaliveTimeout time.Duration) error {
+func Run(relayHost string, relayPort int, code string, interactive bool, keepaliveTimeout time.Duration, identity string) error {
 	if code == "" {
 		return fmt.Errorf("code is required")
 	}
@@ -317,9 +318,9 @@ func Run(relayHost string, relayPort int, code string, interactive bool, keepali
 
 	// Start SSH client in a goroutine
 	errChan := make(chan error, 1)
-	go func() {
-		errChan <- startSSHClient(ctx, relayHost, relayPort, code, keepaliveTimeout)
-	}()
+    go func() {
+        errChan <- startSSHClient(ctx, relayHost, relayPort, code, keepaliveTimeout, identity)
+    }()
 
 	// Wait for context cancellation or error
 	select {

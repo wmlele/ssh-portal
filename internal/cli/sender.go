@@ -16,6 +16,7 @@ var (
 	senderRelayPort        int
 	senderInteractive      bool
 	senderKeepaliveTimeout string
+    senderIdentity         string
 )
 
 var senderCmd = &cobra.Command{
@@ -33,7 +34,7 @@ var senderCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("invalid keepalive timeout: %w", err)
 		}
-		return sender.Run(senderRelayHost, senderRelayPort, code, senderInteractive, keepaliveTimeout)
+        return sender.Run(senderRelayHost, senderRelayPort, code, senderInteractive, keepaliveTimeout, senderIdentity)
 	},
 }
 
@@ -43,6 +44,7 @@ func init() {
 	senderCmd.Flags().IntVar(&senderRelayPort, "relay-port", 4430, "Relay server TCP port")
 	senderCmd.Flags().BoolVar(&senderInteractive, "interactive", true, "interactive mode")
 	senderCmd.Flags().StringVar(&senderKeepaliveTimeout, "keepalive", "30s", "keepalive timeout (e.g., 30s, 1m)")
+    senderCmd.Flags().StringVar(&senderIdentity, "identity", "", "sender identity label to display at receiver")
 	_ = viper.BindPFlag("sender.code", senderCmd.Flags().Lookup("code"))
 	_ = viper.BindEnv("sender.code", "SSH_PORTAL_SENDER_CODE")
 }

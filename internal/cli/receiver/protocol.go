@@ -40,6 +40,13 @@ type ReadyMessage struct {
 	Fingerprint string `json:"fp"`
 	Exp         int64  `json:"exp"`
 	Alg         string `json:"alg,omitempty"`
+    Sender      *SenderInfo `json:"sender,omitempty"`
+}
+
+// SenderInfo mirrors metadata provided by sender via relay
+type SenderInfo struct {
+    Keepalive int    `json:"keepalive,omitempty"`
+    Identity  string `json:"identity,omitempty"`
 }
 
 // ConnectionResult holds the result of connecting to the relay

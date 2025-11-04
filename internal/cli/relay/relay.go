@@ -89,8 +89,8 @@ func handleTCP(c net.Conn) {
 			return
 		}
 		handleReceiverConnection(c, msg.RID, br)
-	case "sender":
-		handleSenderConnection(c, msg.Code, br)
+    case "sender":
+        handleSenderConnection(c, msg, br)
 	default:
 		log.Printf("[TCP] %s -> ERR: unknown role '%s'", remoteAddr, msg.Role)
 		SendErrorResponse(c, "bad-side")
@@ -112,8 +112,8 @@ func handleReceiverConnection(c net.Conn, rid string, br *bufio.Reader) {
 }
 
 // handleSenderConnection processes a sender connection and pairs with receiver
-func handleSenderConnection(c net.Conn, code string, br *bufio.Reader) {
-	inv := HandleSender(c, code)
+func handleSenderConnection(c net.Conn, msg *EndpointMessage, br *bufio.Reader) {
+    inv := HandleSender(c, msg.Code, msg.Sender)
 	if inv == nil {
 		// Error already handled and connection closed by HandleSender
 		return
@@ -129,12 +129,13 @@ func handleSenderConnection(c net.Conn, code string, br *bufio.Reader) {
 
 	// Send "ready" message to receiver with sender address
 	alg := "" // TODO: extract from receiver connection if available
-	readyMsg := ReadyMessage{
+    readyMsg := ReadyMessage{
 		Msg:         "ready",
 		SenderAddr:  senderAddr,
 		Fingerprint: inv.ReceiverFP,
 		Exp:         inv.ExpiresAt.Unix(),
 		Alg:         alg,
+        Sender:      inv.Sender,
 	}
 	if err := sendJSON(rc, readyMsg); err != nil {
 		log.Printf("[PAIR] failed to send ready to receiver: %v", err)

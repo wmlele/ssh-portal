@@ -31,6 +31,7 @@ type JSONHello struct {
 	Role string `json:"role"`
 	Code string `json:"code,omitempty"`
 	RID  string `json:"rid,omitempty"`
+    Sender *SenderInfo `json:"sender,omitempty"`
 }
 
 // JSONOKResponse is the JSON success response sent back by the relay
@@ -54,9 +55,15 @@ type ConnectionResult struct {
 	ClientConfig *ssh.ClientConfig
 }
 
+// SenderInfo contains optional metadata about the sender advertised in hello
+type SenderInfo struct {
+    Keepalive int    `json:"keepalive,omitempty"`
+    Identity  string `json:"identity,omitempty"`
+}
+
 // --- Entry point ---
 
-func ConnectAndHandshake(relayAddr, code string) (*ConnectionResult, error) {
+func ConnectAndHandshake(relayAddr, code string, senderKASeconds int, senderIdentity string) (*ConnectionResult, error) {
 	// Parse code to separate relay code from local secret
 	relayCode, _, fullCode, _ := usercode.ParseUserCode(code)
 
@@ -71,7 +78,12 @@ func ConnectAndHandshake(relayAddr, code string) (*ConnectionResult, error) {
 		sock.Close()
 		return nil, fmt.Errorf("send version: %w", err)
 	}
-	if err := json.NewEncoder(sock).Encode(JSONHello{Msg: "hello", Role: "sender", Code: relayCode}); err != nil {
+    hello := JSONHello{Msg: "hello", Role: "sender", Code: relayCode}
+    // Attach optional sender metadata
+    if senderKASeconds > 0 || senderIdentity != "" {
+        hello.Sender = &SenderInfo{Keepalive: senderKASeconds, Identity: senderIdentity}
+    }
+    if err := json.NewEncoder(sock).Encode(hello); err != nil {
 		sock.Close()
 		return nil, fmt.Errorf("send hello: %w", err)
 	}

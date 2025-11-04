@@ -34,6 +34,7 @@ type EndpointMessage struct {
 	RID        string `json:"rid,omitempty"`
 	ReceiverFP string `json:"receiver_fp,omitempty"`
 	TTLSeconds int    `json:"ttl_seconds,omitempty"`
+    Sender     *SenderInfo `json:"sender,omitempty"`
 }
 
 type OKResponse struct {
@@ -63,6 +64,13 @@ type ReadyMessage struct {
 	Fingerprint string `json:"fp"`
 	Exp         int64  `json:"exp"`
 	Alg         string `json:"alg,omitempty"`
+    Sender      *SenderInfo `json:"sender,omitempty"`
+}
+
+// SenderInfo mirrors the sender metadata provided in the initial hello
+type SenderInfo struct {
+    Keepalive int    `json:"keepalive,omitempty"`
+    Identity  string `json:"identity,omitempty"`
 }
 
 // ParseMessage reads the version line and a single JSON payload message.
@@ -189,7 +197,7 @@ func HandleReceiver(c net.Conn, rid string, br *bufio.Reader) (*Invite, net.Conn
 
 // HandleSender processes a sender connection
 // Returns the invite if ready for pairing, nil on error
-func HandleSender(c net.Conn, code string) *Invite {
+func HandleSender(c net.Conn, code string, meta *SenderInfo) *Invite {
 	remoteAddr := c.RemoteAddr().String()
 	log.Printf("[TCP] %s -> sender connecting with code=%s", remoteAddr, code)
 
@@ -199,7 +207,14 @@ func HandleSender(c net.Conn, code string) *Invite {
 		SendErrorResponse(c, "not-ready")
 		c.Close()
 		return nil
-	}
+    }
+
+    // Attach sender metadata to invite for forwarding to receiver
+    if meta != nil {
+        LockInvites()
+        inv.Sender = meta
+        UnlockInvites()
+    }
 
 	// Send authentication response if not already sent
 	if !inv.sentOK {
@@ -211,5 +226,5 @@ func HandleSender(c net.Conn, code string) *Invite {
 		log.Printf("[TCP] %s -> sender authenticated: code=%s fp=%s", remoteAddr, code, inv.ReceiverFP)
 	}
 
-	return inv
+    return inv
 }

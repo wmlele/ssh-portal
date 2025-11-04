@@ -128,13 +128,16 @@ func startSSHServer(relayHost string, relayPort int, enableSession bool) error {
 	fmt.Println("Waiting for sender to connect...")
 
 	// 4) Wait for "ready" message (sender has connected)
-	ready, err := WaitForReady(connResult.Conn)
+    ready, err := WaitForReady(connResult.Conn)
 	if err != nil {
 		SetError(fmt.Sprintf("failed to receive ready message: %v", err))
 		log.Printf("failed to receive ready message: %v", err)
 		return err
 	}
-	log.Printf("Received ready from relay: sender=%s fp=%s", ready.SenderAddr, ready.Fingerprint)
+    log.Printf("Received ready from relay: sender=%s fp=%s", ready.SenderAddr, ready.Fingerprint)
+    if ready.Sender != nil && ready.Sender.Identity != "" {
+        fmt.Println("Identity  :", ready.Sender.Identity)
+    }
 	SetSenderAddr(ready.SenderAddr)
 
 	// 5) Setup SSH server over the connection (now ready for SSH handshake)
@@ -166,8 +169,11 @@ func startSSHServer(relayHost string, relayPort int, enableSession bool) error {
 	log.Printf("SSH connection established with sender: %s", senderAddr)
 	SetSSHEstablished()
 
-	// Handle keepalive requests and monitor connection health
-	keepaliveTimeout := 30 * time.Second
+    // Handle keepalive requests and monitor connection health
+    keepaliveTimeout := 30 * time.Second
+    if ready.Sender != nil && ready.Sender.Keepalive > 0 {
+        keepaliveTimeout = time.Duration(ready.Sender.Keepalive) * time.Second
+    }
 	lastKeepalive := time.Now()
 	keepaliveMu := &sync.Mutex{}
 

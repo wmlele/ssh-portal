@@ -21,6 +21,7 @@ type Invite struct {
 	ReceiverConn net.Conn
 	sentOK       bool
 	CreatedAt    time.Time
+    Sender       *SenderInfo
 }
 
 // Splice represents an established connection between sender and receiver
