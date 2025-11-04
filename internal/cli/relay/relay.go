@@ -174,41 +174,65 @@ func handleSenderConnection(c net.Conn, msg *EndpointMessage, br *bufio.Reader) 
 	log.Printf("[SPLICE] connection closed: sender=%s receiver=%s", senderAddr, rcAddr)
 }
 
+// countingWriter wraps an io.Writer and updates splice counters atomically
+type countingWriter struct {
+	w      io.Writer
+	splice *Splice
+	isUp   bool // true for receiver->sender (up), false for sender->receiver (down)
+}
+
+func (cw *countingWriter) Write(p []byte) (int, error) {
+	n, err := cw.w.Write(p)
+	if n > 0 {
+		spliceMu.Lock()
+		if cw.isUp {
+			cw.splice.BytesUp += int64(n)
+		} else {
+			cw.splice.BytesDown += int64(n)
+		}
+		spliceMu.Unlock()
+	}
+	return n, err
+}
+
 func spliceConnections(receiver, sender net.Conn, splice *Splice) {
 	defer receiver.Close()
 	defer sender.Close()
 
 	done := make(chan struct{}, 2)
-	var receiverBytes, senderBytes int64
 	receiverAddr := receiver.RemoteAddr().String()
 	senderAddr := sender.RemoteAddr().String()
 
 	// receiver -> sender (upstream)
 	go func() {
-		n, _ := io.Copy(sender, receiver)
-		receiverBytes = n
+		upWriter := &countingWriter{w: sender, splice: splice, isUp: true}
+		io.Copy(upWriter, receiver)
 		done <- struct{}{}
 	}()
 	// sender -> receiver (downstream)
 	go func() {
-		n, _ := io.Copy(receiver, sender)
-		senderBytes = n
+		downWriter := &countingWriter{w: receiver, splice: splice, isUp: false}
+		io.Copy(downWriter, sender)
 		done <- struct{}{}
 	}()
 
 	<-done // wait for first direction
 	<-done // wait for second direction
 
-	// Update splice stats and mark as closed
+	// Mark splice as closed
 	now := time.Now()
 	spliceMu.Lock()
-	splice.BytesUp = receiverBytes // bytes from receiver to sender
-	splice.BytesDown = senderBytes // bytes from sender to receiver
 	splice.ClosedAt = &now
 	spliceMu.Unlock()
 
+	// Get final counts for logging
+	spliceMu.RLock()
+	finalUp := splice.BytesUp
+	finalDown := splice.BytesDown
+	spliceMu.RUnlock()
+
 	log.Printf("[SPLICE] stats: %s <-> %s (%d bytes receiver->sender, %d bytes sender->receiver)",
-		receiverAddr, senderAddr, receiverBytes, senderBytes)
+		receiverAddr, senderAddr, finalUp, finalDown)
 
 	// Call callback for closed splice
 	if callbacks != nil && callbacks.OnClosedSplice != nil {
