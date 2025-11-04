@@ -46,8 +46,7 @@ func startSSHClient(ctx context.Context, relayHost string, relayPort int, code s
 	}
 	defer result.Conn.Close()
 
-	log.Println("SSH connection prepared", result.SSHConn)
-
+	log.Printf("Connected to relay %s:%d", relayHost, relayPort)
 	SetStatus("connecting", "Establishing SSH connection...")
 
 	// Establish SSH connection
@@ -58,7 +57,7 @@ func startSSHClient(ctx context.Context, relayHost string, relayPort int, code s
 		return err
 	}
 
-	log.Println("SSH connection established")
+	log.Printf("SSH connection established with receiver through relay %s:%d", relayHost, relayPort)
 
 	client := ssh.NewClient(cc, chans, reqs)
 

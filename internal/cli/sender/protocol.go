@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"os"
 	"ssh-portal/internal/cli/usercode"
@@ -93,6 +94,7 @@ func ConnectAndHandshake(relayAddr, code string, senderKASeconds int, senderIden
 		sock.Close()
 		return nil, fmt.Errorf("send hello: %w", err)
 	}
+	log.Printf("Sent hello to relay at %s", relayAddr)
 
 	// 3) Read JSON ok, then a blank line; leave SSH banner buffered
 	br := bufio.NewReader(sock)
