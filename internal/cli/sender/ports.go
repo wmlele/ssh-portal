@@ -222,30 +222,47 @@ func UpdatePortsTable(t table.Model, width, height int) table.Model {
 	return t
 }
 
-// RenderLeftPaneContent renders the complete left pane content including header and table
-func RenderLeftPaneContent(width int, portsTable table.Model, helpModel help.Model) string {
+// RenderLeftPaneContent renders the complete left pane content including headers and both tables
+func RenderLeftPaneContent(width int, portsTable table.Model, reversePortsTable table.Model, helpModel help.Model) string {
 	// Get port forward statistics
 	forwards := GetAllPortForwards()
-	count := len(forwards)
+	directCount := len(forwards)
+	revs := GetAllReverseForwards()
+	reverseCount := len(revs)
 
 	// L (Local) -> R (Remote) for forward port forwards
-	header := tui.RenderDirectionalHeader("L", "62", "R", "21", fmt.Sprintf("%d active", count))
+	headerDirect := tui.RenderDirectionalHeader("L", "62", "R", "21", fmt.Sprintf("%d active", directCount))
 
-	// Get table view
-	tableView := portsTable.View()
-	if tableView == "" {
-		tableView = "  No port forwards configured"
+	// R (Remote) -> L (Local) for reverse port forwards
+	headerReverse := tui.RenderDirectionalHeader("R", "21", "L", "62", fmt.Sprintf("%d active", reverseCount))
+
+	// Get table views
+	directView := portsTable.View()
+	if directView == "" {
+		directView = "  No port forwards configured"
+	}
+	reverseView := reversePortsTable.View()
+	if reverseView == "" {
+		reverseView = "  No reverse forwards configured"
 	}
 
 	// Create help key bindings
 	keys := []key.Binding{
 		key.NewBinding(
-			key.WithKeys("n"),
-			key.WithHelp("n", "new port forward"),
+			key.WithKeys("l"),
+			key.WithHelp("l", "new port forward"),
+		),
+		key.NewBinding(
+			key.WithKeys("r"),
+			key.WithHelp("r", "new reverse forward"),
 		),
 		key.NewBinding(
 			key.WithKeys("d"),
 			key.WithHelp("d", "delete port forward"),
+		),
+		key.NewBinding(
+			key.WithKeys("tab"),
+			key.WithHelp("tab", "switch table"),
 		),
 		key.NewBinding(
 			key.WithKeys("up", "down"),
@@ -259,8 +276,10 @@ func RenderLeftPaneContent(width int, portsTable table.Model, helpModel help.Mod
 	// Combine all parts
 	content := lipgloss.JoinVertical(
 		lipgloss.Left,
-		header,
-		tableView,
+		headerDirect,
+		directView,
+		headerReverse,
+		reverseView,
 		"",
 		helpView,
 	)
