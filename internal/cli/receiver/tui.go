@@ -215,8 +215,8 @@ func (m *receiverTUIModel) updateTopContent() {
 	// Render right pane: direct and reverse forwards with headers
 	directCount := len(GetAllDirectTCPIPs())
 	reverseCount := len(GetAllReverseTCPIPs())
-	headerDirect := tui.RenderDirectionalHeader("R", "21", "L", "62", fmt.Sprintf("%d active", directCount))
-	headerReverse := tui.RenderDirectionalHeader("L", "62", "R", "21", fmt.Sprintf("%d active", reverseCount))
+	headerDirect := tui.RenderDirectionalHeader("R", "201", "L", "62", fmt.Sprintf("%d active", directCount))
+	headerReverse := tui.RenderDirectionalHeader("L", "62", "R", "201", fmt.Sprintf("%d active", reverseCount))
 	directView := m.forwardsTable.View()
 	if directView == "" {
 		directView = "  No active forwards"

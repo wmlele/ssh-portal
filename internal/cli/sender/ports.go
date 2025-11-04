@@ -231,10 +231,10 @@ func RenderLeftPaneContent(width int, portsTable table.Model, reversePortsTable 
 	reverseCount := len(revs)
 
 	// L (Local) -> R (Remote) for forward port forwards
-	headerDirect := tui.RenderDirectionalHeader("L", "62", "R", "21", fmt.Sprintf("%d active", directCount))
+	headerDirect := tui.RenderDirectionalHeader("L", "62", "R", "201", fmt.Sprintf("%d active", directCount))
 
 	// R (Remote) -> L (Local) for reverse port forwards
-	headerReverse := tui.RenderDirectionalHeader("R", "21", "L", "62", fmt.Sprintf("%d active", reverseCount))
+	headerReverse := tui.RenderDirectionalHeader("R", "201", "L", "62", fmt.Sprintf("%d active", reverseCount))
 
 	// Get table views
 	directView := portsTable.View()

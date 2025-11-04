@@ -259,7 +259,7 @@ func RenderRightPaneContent(width int, forwardsTable table.Model) string {
 	count := len(forwards)
 
 	// R (Remote/Sender) -> L (Local/Receiver)
-	header := tui.RenderDirectionalHeader("R", "21", "L", "62", fmt.Sprintf("%d active", count))
+	header := tui.RenderDirectionalHeader("R", "201", "L", "62", fmt.Sprintf("%d active", count))
 
 	tableView := forwardsTable.View()
 	if tableView == "" {
