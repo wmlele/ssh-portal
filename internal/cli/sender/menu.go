@@ -128,6 +128,7 @@ func (m *profileMenuModel) Init() tea.Cmd {
 func (m *profileMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
+	// 1) Global / sizing first
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		h, v := menuDocStyle.GetFrameSize()
@@ -158,6 +159,43 @@ func (m *profileMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case tea.KeyMsg:
+		// Global quit handling regardless of focus
+		if key.Matches(msg, m.keys.Quit) || msg.String() == "esc" || msg.String() == "ctrl+c" {
+			m.quitting = true
+			return m, tea.Quit
+		}
+
+		// Toggle focus with tab, regardless of who’s focused
+		if msg.String() == "tab" && m.form != nil {
+			m.formActive = !m.formActive
+			if m.formActive {
+				return m, m.form.Init()
+			}
+			return m, nil
+		}
+	}
+
+	// 2) If the form has focus, forward *every* msg to it (keys, mouse, internal)
+	if m.form != nil && m.formActive {
+		form, cmd := m.form.Update(msg)
+		if f, ok := form.(*huh.Form); ok {
+			m.form = f
+		}
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+
+		// Check completion after the form processes the msg
+		if m.form.State == huh.StateCompleted {
+			m.code = m.codeFormData.Code
+			return m, tea.Quit
+		}
+		return m, tea.Batch(cmds...)
+	}
+
+	// 3) Otherwise, list has focus → do list mouse/keys
+	switch msg := msg.(type) {
 	case tea.MouseMsg:
 		// Only handle mouse if form is not active
 		if m.form == nil || !m.formActive {
@@ -192,13 +230,9 @@ func (m *profileMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.KeyMsg:
-		// Global quit handling regardless of focus
-		if key.Matches(msg, m.keys.Quit) || msg.String() == "esc" || msg.String() == "ctrl+c" {
-			m.quitting = true
-			return m, tea.Quit
-		}
-		// If list is filtering, let it handle all key messages first
-		if m.list.FilterState() == list.Filtering {
+
+		// If list is filtering and list has focus, let list consume keys
+		if m.list.FilterState() == list.Filtering && !m.formActive {
 			var cmd tea.Cmd
 			m.list, cmd = m.list.Update(msg)
 			if cmd != nil {
@@ -206,38 +240,33 @@ func (m *profileMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, tea.Batch(cmds...)
 		}
-		// If form is active, handle form first
-		if m.form != nil && m.formActive {
-			// Handle tab to switch between list and form (before form update)
-			if msg.String() == "tab" {
-				m.formActive = false
-				return m, nil
-			}
 
-			form, cmd := m.form.Update(msg)
-			if f, ok := form.(*huh.Form); ok {
-				m.form = f
-				cmds = append(cmds, cmd)
-			}
+		// // If form is active, handle form first
+		// if m.form != nil && m.formActive {
 
-			fmt.Println("Form updated, form state:", m.form.State, "code:", m.codeFormData.Code)
+		// 	form, cmd := m.form.Update(msg)
+		// 	if f, ok := form.(*huh.Form); ok {
+		// 		m.form = f
 
-			// After form update, update code value from form
-			if m.form.State == huh.StateCompleted {
-				m.code = m.codeFormData.Code
-			}
+		// 	}
+		// 	if cmd != nil {
+		// 		cmds = append(cmds, cmd)
+		// 	}
 
-			// If Enter was pressed, check if we can proceed
-			if msg.String() == "enter" {
-				// If form is complete and we have both profile and code, proceed
-				if m.form.State == huh.StateCompleted && m.selected != "" && m.codeFormData.Code != "" {
-					m.code = m.codeFormData.Code
-					return m, tea.Quit
-				}
-			}
+		// 	// After form update, update code value from form
+		// 	if m.form.State == huh.StateCompleted {
+		// 		m.code = m.codeFormData.Code
+		// 	}
 
-			return m, tea.Batch(cmds...)
-		}
+		// 	fmt.Println("Form updated, form state:", m.form.State, "code:", m.codeFormData.Code)
+		// 	// If form is complete and we have both profile and code, proceed
+		// 	if m.form.State == huh.StateCompleted && m.codeFormData.Code != "" {
+		// 		m.code = m.codeFormData.Code
+		// 		return m, tea.Quit
+		// 	}
+
+		// 	return m, tea.Batch(cmds...)
+		// }
 
 		// Handle list navigation
 		switch {
@@ -264,12 +293,6 @@ func (m *profileMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						}
 					}
 				}
-			}
-		case msg.String() == "tab" && m.form != nil:
-			// Switch between list and form
-			m.formActive = !m.formActive
-			if m.formActive {
-				cmds = append(cmds, m.form.Init())
 			}
 		}
 	}
