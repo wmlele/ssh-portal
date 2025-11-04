@@ -144,14 +144,14 @@ func startSSHServer(relayHost string, relayPort int, enableSession bool) error {
 			log.Printf("Failed to decode sender identity: %v", err)
 			// Use encoded value as fallback
 			SetSenderIdentity(ready.Sender.Identity)
-			logMsg += fmt.Sprintf(" identity=<decode-error>")
+			logMsg += " identity=<decode-error>"
 		} else {
 			identity := string(decodedIdentity)
 			SetSenderIdentity(identity)
 			logMsg += fmt.Sprintf(" identity=%s", identity)
 		}
 	}
-	log.Printf(logMsg)
+	log.Printf("%s", logMsg)
 	SetSenderAddr(ready.SenderAddr)
 
 	// 5) Setup SSH server over the connection (now ready for SSH handshake)
