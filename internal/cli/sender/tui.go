@@ -87,17 +87,21 @@ func (m *senderTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// If the form just completed, perform submission
 				if m.portForm.State == huh.StateCompleted {
 					if m.formKind == "reverse" {
-						if m.revFormData.RemoteAddr != "" && m.revFormData.RemotePort != "" && m.revFormData.LocalAddr != "" && m.revFormData.LocalPort != "" {
+						if m.revFormData.RemotePort != "" && m.revFormData.LocalAddr != "" && m.revFormData.LocalPort != "" {
 							p, err := strconv.Atoi(m.revFormData.RemotePort)
 							if err != nil || p < 0 || p > 65535 {
 								log.Printf("Invalid remote port: %s", m.revFormData.RemotePort)
 							} else {
+								remoteAddr := m.revFormData.RemoteAddr
+								if remoteAddr == "" {
+									remoteAddr = "0.0.0.0"
+								}
 								localTarget := BuildLocalTarget(m.revFormData.LocalAddr, m.revFormData.LocalPort)
-								id, actual, err := StartReverseForward(m.revFormData.RemoteAddr, uint32(p), localTarget)
+								id, actual, err := StartReverseForward(remoteAddr, uint32(p), localTarget)
 								if err != nil || id == "" {
 									log.Printf("Failed to create reverse forward: %v", err)
 								} else {
-									log.Printf("Reverse forward created on %s:%d -> %s", m.revFormData.RemoteAddr, actual, localTarget)
+									log.Printf("Reverse forward created on %s:%d -> %s", remoteAddr, actual, localTarget)
 									m.activeTable = 1
 									m.updateTableFocus()
 								}
@@ -442,17 +446,21 @@ func (m *senderTUIModel) handleFormMessage(msg tea.Msg) (tea.Cmd, bool) {
 		// Check if form was just completed
 		if m.portForm.State == huh.StateCompleted {
 			if m.formKind == "reverse" {
-				if m.revFormData.RemoteAddr != "" && m.revFormData.RemotePort != "" && m.revFormData.LocalAddr != "" && m.revFormData.LocalPort != "" {
+				if m.revFormData.RemotePort != "" && m.revFormData.LocalAddr != "" && m.revFormData.LocalPort != "" {
 					p, err := strconv.Atoi(m.revFormData.RemotePort)
 					if err != nil || p < 0 || p > 65535 {
 						log.Printf("Invalid remote port: %s", m.revFormData.RemotePort)
 					} else {
+						remoteAddr := m.revFormData.RemoteAddr
+						if remoteAddr == "" {
+							remoteAddr = "0.0.0.0"
+						}
 						localTarget := BuildLocalTarget(m.revFormData.LocalAddr, m.revFormData.LocalPort)
-						id, actual, err := StartReverseForward(m.revFormData.RemoteAddr, uint32(p), localTarget)
+						id, actual, err := StartReverseForward(remoteAddr, uint32(p), localTarget)
 						if err != nil || id == "" {
 							log.Printf("Failed to create reverse forward: %v", err)
 						} else {
-							log.Printf("Reverse forward created on %s:%d -> %s", m.revFormData.RemoteAddr, actual, localTarget)
+							log.Printf("Reverse forward created on %s:%d -> %s", remoteAddr, actual, localTarget)
 							m.activeTable = 1
 							m.updateTableFocus()
 						}

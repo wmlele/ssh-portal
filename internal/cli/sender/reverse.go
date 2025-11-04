@@ -148,12 +148,12 @@ func NewReverseForwardForm(width int, formData *ReverseForwardForm) *huh.Form {
 		huh.NewGroup(
 			huh.NewInput().
 				Title("Remote Listen Address").
-				Description("Receiver address to bind (e.g., 0.0.0.0 or 127.0.0.1)").
+				Description("Receiver address to bind (e.g., 0.0.0.0 or 127.0.0.1). Leave empty for 0.0.0.0").
 				Placeholder("0.0.0.0").
 				Value(&formData.RemoteAddr).
 				Validate(func(s string) error {
 					if s == "" {
-						return fmt.Errorf("remote address is required")
+						return nil // Empty is allowed, defaults to 0.0.0.0
 					}
 					if net.ParseIP(s) == nil && s != "localhost" {
 						return fmt.Errorf("invalid IP address")
