@@ -201,19 +201,17 @@ func startSSHServer(relayHost string, relayPort int, enableSession bool) error {
 	go func() {
 		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				keepaliveMu.Lock()
-				lastKeepaliveTime := lastKeepalive
-				keepaliveMu.Unlock()
 
-				if time.Since(lastKeepaliveTime) > keepaliveTimeout {
-					log.Printf("Keepalive timeout, sender connection appears dead, closing SSH connection")
-					SetError("Sender connection timeout")
-					sshConn.Close()
-					return
-				}
+		for range ticker.C {
+			keepaliveMu.Lock()
+			last := lastKeepalive
+			keepaliveMu.Unlock()
+
+			if time.Since(last) > keepaliveTimeout {
+				log.Printf("Keepalive timeout, sender connection appears dead, closing SSH connection")
+				SetError("Sender connection timeout")
+				sshConn.Close()
+				return
 			}
 		}
 	}()
