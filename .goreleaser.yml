@@ -16,9 +16,9 @@ builds:
       - -trimpath
     ldflags:
       - -s -w
-      - -X main.Version={{.Version}}
-      - -X main.Commit={{.ShortCommit}}
-      - -X main.Date={{.CommitDate}}      
+      - -X ssh-portal/internal/version.Version={{.Version}}
+      - -X ssh-portal/internal/version.Commit={{.ShortCommit}}
+      - -X ssh-portal/internal/version.Date={{.CommitDate}}      
     goos: [linux, darwin]
     goarch: [amd64, arm64]
   
