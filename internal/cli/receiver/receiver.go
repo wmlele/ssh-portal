@@ -40,6 +40,22 @@ var (
 	directTCPIPs  = make(map[string]*DirectTCPIP)
 )
 
+// ReverseTCPIP represents an active reverse (tcpip-forward) connection
+type ReverseTCPIP struct {
+	ID         string
+	ListenAddr string
+	ListenPort uint32
+	OriginAddr string
+	OriginPort uint32
+	CreatedAt  time.Time
+	Listener   net.Listener
+}
+
+var (
+	reverseTCPIPMu sync.RWMutex
+	reverseTCPIPs  = make(map[string]*ReverseTCPIP)
+)
+
 // GetAllDirectTCPIPs returns all active direct-tcpip forwarding connections
 func GetAllDirectTCPIPs() []*DirectTCPIP {
 	directTCPIPMu.RLock()
@@ -48,6 +64,18 @@ func GetAllDirectTCPIPs() []*DirectTCPIP {
 	result := make([]*DirectTCPIP, 0, len(directTCPIPs))
 	for _, dtcp := range directTCPIPs {
 		result = append(result, dtcp)
+	}
+	return result
+}
+
+// GetAllReverseTCPIPs returns all active reverse-tcpip connections
+func GetAllReverseTCPIPs() []*ReverseTCPIP {
+	reverseTCPIPMu.RLock()
+	defer reverseTCPIPMu.RUnlock()
+
+	result := make([]*ReverseTCPIP, 0, len(reverseTCPIPs))
+	for _, r := range reverseTCPIPs {
+		result = append(result, r)
 	}
 	return result
 }
@@ -344,10 +372,128 @@ func setWinsize(f *os.File, h, w uint32) {
 	_, _, _ = syscall.Syscall(syscall.SYS_IOCTL, f.Fd(), uintptr(syscall.TIOCSWINSZ), uintptr(unsafe.Pointer(ws)))
 }
 
-func handleGlobal(reqs <-chan *ssh.Request, _ *ssh.ServerConn) {
-	// TODO: implement tcpip-forward / cancel-tcpip-forward to support -R
+func handleGlobal(reqs <-chan *ssh.Request, conn *ssh.ServerConn) {
 	for req := range reqs {
 		switch req.Type {
+		case "tcpip-forward":
+			// Payload: string address_to_bind, uint32 port
+			var msg struct {
+				Address string
+				Port    uint32
+			}
+			if err := ssh.Unmarshal(req.Payload, &msg); err != nil {
+				log.Printf("[R-FWD] bad tcpip-forward payload: %v", err)
+				req.Reply(false, nil)
+				continue
+			}
+			bindAddr := msg.Address
+			bindPort := msg.Port
+			host := net.JoinHostPort(bindAddr, strconv.FormatUint(uint64(bindPort), 10))
+			if bindPort == 0 {
+				host = net.JoinHostPort(bindAddr, "0")
+			}
+			ln, err := net.Listen("tcp", host)
+			if err != nil {
+				log.Printf("[R-FWD] listen failed on %s: %v", host, err)
+				req.Reply(false, nil)
+				continue
+			}
+			// If port was zero, reply with the allocated port
+			actualPort := uint32(ln.Addr().(*net.TCPAddr).Port)
+			if bindPort == 0 {
+				// reply expects a uint32 port
+				reply := struct{ Port uint32 }{Port: actualPort}
+				req.Reply(true, ssh.Marshal(reply))
+			} else {
+				req.Reply(true, nil)
+			}
+
+			id := fmt.Sprintf("%d", time.Now().UnixNano())
+			rf := &ReverseTCPIP{
+				ID:         id,
+				ListenAddr: bindAddr,
+				ListenPort: actualPort,
+				CreatedAt:  time.Now(),
+				Listener:   ln,
+			}
+			reverseTCPIPMu.Lock()
+			reverseTCPIPs[id] = rf
+			reverseTCPIPMu.Unlock()
+			log.Printf("[R-FWD] listening id=%s on %s:%d", id, bindAddr, actualPort)
+
+			// Accept loop
+			go func(id string, ln net.Listener, bindAddr string, bindPort uint32) {
+				for {
+					lc, err := ln.Accept()
+					if err != nil {
+						// Listener closed
+						log.Printf("[R-FWD] listener closed id=%s: %v", id, err)
+						return
+					}
+					// On accept, open a forwarded-tcpip channel to the sender
+					go func(lc net.Conn) {
+						defer lc.Close()
+						orgHost, orgPortStr, _ := net.SplitHostPort(lc.RemoteAddr().String())
+						var orgPort64 uint64
+						if orgPortStr != "" {
+							if p, err := strconv.ParseUint(orgPortStr, 10, 32); err == nil {
+								orgPort64 = p
+							}
+						}
+						// Update entry for display
+						reverseTCPIPMu.Lock()
+						if r := reverseTCPIPs[id]; r != nil {
+							r.OriginAddr = orgHost
+							r.OriginPort = uint32(orgPort64)
+						}
+						reverseTCPIPMu.Unlock()
+
+						// Prepare forwarded-tcpip payload
+						type fwdPayload struct {
+							BindAddr   string
+							BindPort   uint32
+							OriginAddr string
+							OriginPort uint32
+						}
+						payload := ssh.Marshal(fwdPayload{bindAddr, bindPort, orgHost, uint32(orgPort64)})
+						ch, reqs, err := conn.OpenChannel("forwarded-tcpip", payload)
+						if err != nil {
+							log.Printf("[R-FWD] open forwarded-tcpip failed: %v", err)
+							return
+						}
+						go discard(reqs)
+						// Bridge data
+						go io.Copy(ch, lc)
+						_, _ = io.Copy(lc, ch)
+						ch.Close()
+					}(lc)
+				}
+			}(id, ln, bindAddr, actualPort)
+
+		case "cancel-tcpip-forward":
+			// Payload: string address_to_bind, uint32 port
+			var msg struct {
+				Address string
+				Port    uint32
+			}
+			if err := ssh.Unmarshal(req.Payload, &msg); err != nil {
+				log.Printf("[R-FWD] bad cancel payload: %v", err)
+				req.Reply(false, nil)
+				continue
+			}
+			// Find matching listener
+			var closed bool
+			reverseTCPIPMu.Lock()
+			for id, r := range reverseTCPIPs {
+				if r.ListenAddr == msg.Address && r.ListenPort == msg.Port {
+					r.Listener.Close()
+					delete(reverseTCPIPs, id)
+					closed = true
+					break
+				}
+			}
+			reverseTCPIPMu.Unlock()
+			req.Reply(closed, nil)
 		default:
 			req.Reply(false, nil)
 		}

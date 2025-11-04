@@ -7,6 +7,8 @@ import (
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/lipgloss"
+
+	"ssh-portal/internal/cli/tui"
 )
 
 // ReceiverState holds the current receiver state
@@ -253,19 +255,11 @@ func RenderLeftPaneContent(width int, sp spinner.Model) string {
 
 // RenderRightPaneContent renders the forwards table with header for the right pane
 func RenderRightPaneContent(width int, forwardsTable table.Model) string {
-	titleStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("62")).
-		MarginBottom(1)
-
-	infoStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("240")).
-		MarginBottom(1)
-
-	title := titleStyle.Render("Active TCP/IP Forwards")
-
 	forwards := GetAllDirectTCPIPs()
-	info := infoStyle.Render(fmt.Sprintf("Active: %d", len(forwards)))
+	count := len(forwards)
+
+	// R (Remote/Sender) -> L (Local/Receiver)
+	header := tui.RenderDirectionalHeader("R", "21", "L", "62", fmt.Sprintf("%d active", count))
 
 	tableView := forwardsTable.View()
 	if tableView == "" {
@@ -274,10 +268,121 @@ func RenderRightPaneContent(width int, forwardsTable table.Model) string {
 
 	content := lipgloss.JoinVertical(
 		lipgloss.Left,
-		title,
-		info,
+		header,
 		tableView,
 	)
 
 	return content
+}
+
+// NewReverseForwardsTable creates and returns a table.Model for reverse (tcpip-forward) entries
+func NewReverseForwardsTable(width, height int) table.Model {
+	if width < 20 {
+		width = 20
+	}
+	if height < 3 {
+		height = 3
+	}
+	availableWidth := width - 4
+	// Two columns: Listen, Origin
+	colWidth := availableWidth / 2
+
+	columns := []table.Column{
+		{Title: "Listen", Width: colWidth},
+		{Title: "Origin", Width: colWidth},
+	}
+
+	rows := []table.Row{}
+	revs := GetAllReverseTCPIPs()
+	for _, r := range revs {
+		listen := fmt.Sprintf("%s:%d", r.ListenAddr, r.ListenPort)
+		origin := ""
+		if r.OriginAddr != "" {
+			origin = fmt.Sprintf("%s:%d", r.OriginAddr, r.OriginPort)
+		}
+		if len(listen) > colWidth {
+			listen = listen[:colWidth]
+		}
+		if len(origin) > colWidth {
+			origin = origin[:colWidth]
+		}
+		rows = append(rows, table.Row{listen, origin})
+	}
+
+	t := table.New(
+		table.WithColumns(columns),
+		table.WithRows(rows),
+		table.WithFocused(true),
+		table.WithHeight(height),
+		table.WithWidth(width),
+	)
+
+	s := table.DefaultStyles()
+	s.Header = s.Header.
+		BorderStyle(lipgloss.NormalBorder()).
+		BorderForeground(lipgloss.Color("240")).
+		BorderBottom(true).
+		Bold(true).
+		Foreground(lipgloss.Color("62"))
+	s.Selected = s.Selected.
+		Foreground(lipgloss.Color("230")).
+		Background(lipgloss.Color("62")).
+		Bold(false)
+	t.SetStyles(s)
+
+	return t
+}
+
+// UpdateReverseForwardsTable updates the reverse table with current data
+func UpdateReverseForwardsTable(t table.Model, width, height int) table.Model {
+	if width < 20 {
+		width = 20
+	}
+	if height < 3 {
+		height = 3
+	}
+	availableWidth := width - 4
+	colWidth := availableWidth / 2
+
+	columns := []table.Column{
+		{Title: "Listen", Width: colWidth},
+		{Title: "Origin", Width: colWidth},
+	}
+
+	rows := []table.Row{}
+	revs := GetAllReverseTCPIPs()
+	for _, r := range revs {
+		listen := fmt.Sprintf("%s:%d", r.ListenAddr, r.ListenPort)
+		origin := ""
+		if r.OriginAddr != "" {
+			origin = fmt.Sprintf("%s:%d", r.OriginAddr, r.OriginPort)
+		}
+		if len(listen) > colWidth {
+			listen = listen[:colWidth]
+		}
+		if len(origin) > colWidth {
+			origin = origin[:colWidth]
+		}
+		rows = append(rows, table.Row{listen, origin})
+	}
+
+	currentCursor := t.Cursor()
+	t.SetColumns(columns)
+	t.SetRows(rows)
+	t.SetWidth(width)
+	t.SetHeight(height)
+
+	if len(rows) > 0 {
+		if currentCursor >= len(rows) {
+			currentCursor = len(rows) - 1
+		}
+		if currentCursor < 0 {
+			currentCursor = 0
+		}
+		t.SetCursor(currentCursor)
+	} else {
+		t.SetCursor(0)
+	}
+
+	return t
 }

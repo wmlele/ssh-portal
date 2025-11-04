@@ -2,6 +2,7 @@ package receiver
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"strings"
 	"time"
@@ -23,15 +24,16 @@ const (
 
 // TUI model for receiver
 type receiverTUIModel struct {
-	forwardsTable table.Model
-	leftViewport  viewport.Model
-	rightViewport viewport.Model
-	logViewer     *tui.LogViewer
-	spinner       spinner.Model
-	cancel        context.CancelFunc
-	width         int
-	height        int
-	ready         bool
+	forwardsTable        table.Model
+	reverseForwardsTable table.Model
+	leftViewport         viewport.Model
+	rightViewport        viewport.Model
+	logViewer            *tui.LogViewer
+	spinner              spinner.Model
+	cancel               context.CancelFunc
+	width                int
+	height               int
+	ready                bool
 }
 
 func newReceiverTUIModel(logWriter *tui.LogTailWriter, cancel context.CancelFunc) *receiverTUIModel {
@@ -90,21 +92,26 @@ func (m *receiverTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		leftWidth := (availableWidth * leftSectionWidth) / 100
 		rightWidth := availableWidth - leftWidth - 1 // -1 for divider
 
-		// Reserve some height for header/info in right pane, rest for table
-		tableHeight := topHeight - 4 // Reserve ~4 lines for title and info
-		if tableHeight < 3 {
-			tableHeight = 3
+		// Compute table heights for two stacked tables in right pane
+		// Reserve ~2 lines for headers between tables
+		availableTableHeight := topHeight - 4
+		if availableTableHeight < 6 {
+			availableTableHeight = 6
 		}
+		topTableHeight := availableTableHeight / 2
+		bottomTableHeight := availableTableHeight - topTableHeight
 
 		if !m.ready {
-			m.forwardsTable = NewForwardsTable(rightWidth, tableHeight)
+			m.forwardsTable = NewForwardsTable(rightWidth, topTableHeight)
+			m.reverseForwardsTable = NewReverseForwardsTable(rightWidth, bottomTableHeight)
 			m.leftViewport = viewport.New(leftWidth, topHeight)
 			m.rightViewport = viewport.New(rightWidth, topHeight)
 			m.width = msg.Width
 			m.height = msg.Height
 			m.ready = true
 		} else {
-			m.forwardsTable = UpdateForwardsTable(m.forwardsTable, rightWidth, tableHeight)
+			m.forwardsTable = UpdateForwardsTable(m.forwardsTable, rightWidth, topTableHeight)
+			m.reverseForwardsTable = UpdateReverseForwardsTable(m.reverseForwardsTable, rightWidth, bottomTableHeight)
 			m.leftViewport.Width = leftWidth
 			m.leftViewport.Height = topHeight
 			m.rightViewport.Width = rightWidth
@@ -118,10 +125,14 @@ func (m *receiverTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.logViewer.SetSize(msg.Width, bottomHeight)
 
 		// Handle table and viewport updates
-		var tableCmd, leftCmd, rightCmd tea.Cmd
+		var tableCmd, table2Cmd, leftCmd, rightCmd tea.Cmd
 		m.forwardsTable, tableCmd = m.forwardsTable.Update(msg)
 		if tableCmd != nil {
 			cmds = append(cmds, tableCmd)
+		}
+		m.reverseForwardsTable, table2Cmd = m.reverseForwardsTable.Update(msg)
+		if table2Cmd != nil {
+			cmds = append(cmds, table2Cmd)
 		}
 		m.leftViewport, leftCmd = m.leftViewport.Update(msg)
 		if leftCmd != nil {
@@ -148,10 +159,14 @@ func (m *receiverTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Handle table and viewport updates
 		if m.ready {
-			var tableCmd, leftCmd, rightCmd tea.Cmd
+			var tableCmd, table2Cmd, leftCmd, rightCmd tea.Cmd
 			m.forwardsTable, tableCmd = m.forwardsTable.Update(msg)
 			if tableCmd != nil {
 				cmds = append(cmds, tableCmd)
+			}
+			m.reverseForwardsTable, table2Cmd = m.reverseForwardsTable.Update(msg)
+			if table2Cmd != nil {
+				cmds = append(cmds, table2Cmd)
 			}
 			m.leftViewport, leftCmd = m.leftViewport.Update(msg)
 			if leftCmd != nil {
@@ -178,24 +193,45 @@ func (m *receiverTUIModel) updateTopContent() {
 		return
 	}
 
-	// Update forwards table with current data
+	// Update tables with current data
 	// Use viewport width instead of table width to ensure correct sizing
 	tableWidth := m.rightViewport.Width
 	if tableWidth < 20 {
 		tableWidth = 20
 	}
-	tableHeight := m.rightViewport.Height - 4 // Reserve space for title/info
-	if tableHeight < 3 {
-		tableHeight = 3
+	availableTableHeight := m.rightViewport.Height - 4
+	if availableTableHeight < 6 {
+		availableTableHeight = 6
 	}
-	m.forwardsTable = UpdateForwardsTable(m.forwardsTable, tableWidth, tableHeight)
+	topTableHeight := availableTableHeight / 2
+	bottomTableHeight := availableTableHeight - topTableHeight
+	m.forwardsTable = UpdateForwardsTable(m.forwardsTable, tableWidth, topTableHeight)
+	m.reverseForwardsTable = UpdateReverseForwardsTable(m.reverseForwardsTable, tableWidth, bottomTableHeight)
 
 	// Render left pane: connection info
 	leftContent := RenderLeftPaneContent(m.leftViewport.Width, m.spinner)
 	m.leftViewport.SetContent(leftContent)
 
-	// Render right pane: forwards table
-	rightContent := RenderRightPaneContent(m.rightViewport.Width, m.forwardsTable)
+	// Render right pane: direct and reverse forwards with headers
+	directCount := len(GetAllDirectTCPIPs())
+	reverseCount := len(GetAllReverseTCPIPs())
+	headerDirect := tui.RenderDirectionalHeader("R", "21", "L", "62", fmt.Sprintf("%d active", directCount))
+	headerReverse := tui.RenderDirectionalHeader("L", "62", "R", "21", fmt.Sprintf("%d active", reverseCount))
+	directView := m.forwardsTable.View()
+	if directView == "" {
+		directView = "  No active forwards"
+	}
+	reverseView := m.reverseForwardsTable.View()
+	if reverseView == "" {
+		reverseView = "  No reverse forwards"
+	}
+	rightContent := lipgloss.JoinVertical(
+		lipgloss.Left,
+		headerDirect,
+		directView,
+		headerReverse,
+		reverseView,
+	)
 	m.rightViewport.SetContent(rightContent)
 }
 

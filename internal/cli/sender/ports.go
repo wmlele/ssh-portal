@@ -14,6 +14,8 @@ import (
 	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
+
+	"ssh-portal/internal/cli/tui"
 )
 
 // PortForward represents a configured port forward
@@ -222,20 +224,12 @@ func UpdatePortsTable(t table.Model, width, height int) table.Model {
 
 // RenderLeftPaneContent renders the complete left pane content including header and table
 func RenderLeftPaneContent(width int, portsTable table.Model, helpModel help.Model) string {
-	titleStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("62")).
-		MarginBottom(1)
-
-	infoStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("240")).
-		MarginBottom(1)
-
-	title := titleStyle.Render("Port Forwards")
-
 	// Get port forward statistics
 	forwards := GetAllPortForwards()
-	info := infoStyle.Render(fmt.Sprintf("Configured: %d", len(forwards)))
+	count := len(forwards)
+
+	// L (Local) -> R (Remote) for forward port forwards
+	header := tui.RenderDirectionalHeader("L", "62", "R", "21", fmt.Sprintf("%d active", count))
 
 	// Get table view
 	tableView := portsTable.View()
@@ -265,8 +259,7 @@ func RenderLeftPaneContent(width int, portsTable table.Model, helpModel help.Mod
 	// Combine all parts
 	content := lipgloss.JoinVertical(
 		lipgloss.Left,
-		title,
-		info,
+		header,
 		tableView,
 		"",
 		helpView,
