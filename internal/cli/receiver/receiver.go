@@ -23,6 +23,7 @@ import (
 
 	"errors"
 	"ssh-portal/internal/cli/usercode"
+	"ssh-portal/internal/version"
 )
 
 var (
@@ -605,6 +606,7 @@ func handleGlobal(reqs <-chan *ssh.Request, conn *ssh.ServerConn, keepaliveMu *s
 
 // Run executes the receiver command
 func Run(relayHost string, relayPort int, interactive bool, session bool) error {
+	log.Printf("Starting receiver version %s", version.String())
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 

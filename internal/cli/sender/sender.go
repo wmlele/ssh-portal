@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"golang.org/x/crypto/ssh"
+
+	"ssh-portal/internal/version"
 )
 
 var (
@@ -306,6 +308,7 @@ func Run(relayHost string, relayPort int, code string, interactive bool, keepali
 
 // RunWithConfig executes the sender command with configuration
 func RunWithConfig(relayHost string, relayPort int, code string, interactive bool, keepaliveTimeout time.Duration, identity string, cfg *Config) error {
+	log.Printf("Starting sender version %s", version.String())
 	if code == "" {
 		return fmt.Errorf("code is required")
 	}

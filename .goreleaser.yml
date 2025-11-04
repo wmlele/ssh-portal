@@ -9,7 +9,7 @@ before:
 
 builds:
   - id: ssh-portal
-    main: ./cmd/main.go
+    main: ./cmd/ssh-portal/main.go
     env:
       - CGO_ENABLED=0        # turn off cgo for easy cross-compile
     flags:
@@ -19,7 +19,7 @@ builds:
       - -X main.Version={{.Version}}
       - -X main.Commit={{.ShortCommit}}
       - -X main.Date={{.CommitDate}}      
-    goos: [linux, darwin, windows]
+    goos: [linux, darwin]
     goarch: [amd64, arm64]
   
 

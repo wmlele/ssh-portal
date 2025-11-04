@@ -9,6 +9,8 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
+	"ssh-portal/internal/version"
 )
 
 // RenderTitleBar renders a two-line header with software name and colored bar
@@ -20,12 +22,17 @@ func RenderTitleBar(moduleName string, width int) string {
 		Foreground(lipgloss.Color("62")).
 		Padding(0, 1)
 
+	infoStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("240"))
+
 	barStyle := lipgloss.NewStyle().
 		Background(lipgloss.Color("62")).
 		Width(width).
 		Height(1)
 
-	title := headerStyle.Render(fmt.Sprintf("SSH Portal - %s", moduleName))
+	titleText := headerStyle.Render(fmt.Sprintf("SSH Portal - %s", moduleName))
+	versionText := infoStyle.Render(version.String())
+	title := fmt.Sprintf("%s %s", titleText, versionText)
 	bar := barStyle.Render(strings.Repeat(" ", width))
 	return lipgloss.JoinVertical(lipgloss.Left, title, bar)
 }
