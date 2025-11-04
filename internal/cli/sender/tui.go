@@ -122,7 +122,7 @@ func (m *senderTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						}
 					} else {
 						if m.formData.LocalPort != "" && m.formData.RemoteAddr != "" && m.formData.RemotePort != "" {
-							listen := BuildListenAddress(m.formData.LocalPort)
+							listen := BuildListenAddress(m.formData.LocalAddr, m.formData.LocalPort)
 							target := BuildTargetAddress(m.formData.RemoteAddr, m.formData.RemotePort)
 							id := RegisterPortForward(listen, target)
 							if id == "" {
@@ -476,7 +476,7 @@ func (m *senderTUIModel) handleFormMessage(msg tea.Msg) (tea.Cmd, bool) {
 				}
 			} else {
 				if m.formData.LocalPort != "" && m.formData.RemoteAddr != "" && m.formData.RemotePort != "" {
-					listen := BuildListenAddress(m.formData.LocalPort)
+					listen := BuildListenAddress(m.formData.LocalAddr, m.formData.LocalPort)
 					target := BuildTargetAddress(m.formData.RemoteAddr, m.formData.RemotePort)
 					id := RegisterPortForward(listen, target)
 					if id == "" {

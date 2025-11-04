@@ -289,6 +289,7 @@ func RenderLeftPaneContent(width int, portsTable table.Model, reversePortsTable 
 
 // PortForwardForm holds the form data for creating a new port forward
 type PortForwardForm struct {
+	LocalAddr  string
 	LocalPort  string
 	RemoteAddr string
 	RemotePort string
@@ -298,6 +299,20 @@ type PortForwardForm struct {
 func NewPortForwardForm(width int, formData *PortForwardForm) *huh.Form {
 	form := huh.NewForm(
 		huh.NewGroup(
+			huh.NewInput().
+				Title("Local Address").
+				Description("Local address to listen on (e.g., 0.0.0.0 or 127.0.0.1). Leave empty for 0.0.0.0").
+				Placeholder("0.0.0.0").
+				Value(&formData.LocalAddr).
+				Validate(func(s string) error {
+					if s == "" {
+						return nil // Empty is allowed, defaults to 0.0.0.0
+					}
+					if net.ParseIP(s) == nil && s != "localhost" {
+						return fmt.Errorf("invalid IP address")
+					}
+					return nil
+				}),
 			huh.NewInput().
 				Title("Local Port").
 				Description("Local port to listen on (e.g., 10022)").
@@ -354,9 +369,15 @@ func NewPortForwardForm(width int, formData *PortForwardForm) *huh.Form {
 	return form
 }
 
-// BuildListenAddress constructs the listen address from local port
-func BuildListenAddress(localPort string) string {
-	return net.JoinHostPort("0.0.0.0", localPort)
+// BuildListenAddress constructs the listen address from local address and port
+func BuildListenAddress(localAddr, localPort string) string {
+	if localAddr == "" {
+		localAddr = "0.0.0.0"
+	}
+	if localAddr == "localhost" {
+		localAddr = "127.0.0.1"
+	}
+	return net.JoinHostPort(localAddr, localPort)
 }
 
 // BuildTargetAddress constructs the target address from remote address and port
