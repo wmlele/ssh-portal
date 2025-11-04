@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -28,6 +29,7 @@ type senderTUIModel struct {
 	leftViewport  viewport.Model
 	rightViewport viewport.Model
 	logViewer     *tui.LogViewer
+	help          help.Model
 	cancel        context.CancelFunc
 	width         int
 	height        int
@@ -41,6 +43,7 @@ type senderTUIModel struct {
 func newSenderTUIModel(logWriter *tui.LogTailWriter, cancel context.CancelFunc) *senderTUIModel {
 	return &senderTUIModel{
 		logViewer: tui.NewLogViewer(logWriter),
+		help:      help.New(),
 		cancel:    cancel,
 	}
 }
@@ -397,13 +400,15 @@ func (m *senderTUIModel) updateTopContent() {
 		if tableWidth < 20 {
 			tableWidth = 20
 		}
-		tableHeight := m.leftViewport.Height - 4 // Reserve space for title/info
+		tableHeight := m.leftViewport.Height - 6 // Reserve space for title/info/help
 		if tableHeight < 3 {
 			tableHeight = 3
 		}
 		m.portsTable = UpdatePortsTable(m.portsTable, tableWidth, tableHeight)
-		// Render left pane: header + table
-		leftContent = RenderLeftPaneContent(m.leftViewport.Width, m.portsTable)
+		// Update help width
+		m.help.Width = m.leftViewport.Width
+		// Render left pane: header + table + help
+		leftContent = RenderLeftPaneContent(m.leftViewport.Width, m.portsTable, m.help)
 	}
 	m.leftViewport.SetContent(leftContent)
 

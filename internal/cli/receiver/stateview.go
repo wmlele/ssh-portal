@@ -89,10 +89,11 @@ func NewForwardsTable(width, height int) table.Model {
 		height = 3
 	}
 	availableWidth := width - 4
-	// Two columns: Origin, Destination
-	colWidth := availableWidth / 2
+	// Three columns: Src Address, Origin, Destination
+	colWidth := availableWidth / 3
 
 	columns := []table.Column{
+		{Title: "Src Address", Width: colWidth},
 		{Title: "Origin", Width: colWidth},
 		{Title: "Destination", Width: colWidth},
 	}
@@ -100,10 +101,14 @@ func NewForwardsTable(width, height int) table.Model {
 	rows := []table.Row{}
 	forwards := GetAllDirectTCPIPs()
 	for _, fwd := range forwards {
+		srcAddr := fwd.SrcAddress
 		origin := fmt.Sprintf("%s:%d", fwd.OriginAddr, fwd.OriginPort)
 		dest := fmt.Sprintf("%s:%d", fwd.DestAddr, fwd.DestPort)
 
 		// Truncate if too long
+		if len(srcAddr) > colWidth {
+			srcAddr = srcAddr[:colWidth]
+		}
 		if len(origin) > colWidth {
 			origin = origin[:colWidth]
 		}
@@ -111,7 +116,7 @@ func NewForwardsTable(width, height int) table.Model {
 			dest = dest[:colWidth]
 		}
 
-		rows = append(rows, table.Row{origin, dest})
+		rows = append(rows, table.Row{srcAddr, origin, dest})
 	}
 
 	t := table.New(
@@ -147,9 +152,11 @@ func UpdateForwardsTable(t table.Model, width, height int) table.Model {
 		height = 3
 	}
 	availableWidth := width - 4
-	colWidth := availableWidth / 2
+	// Three columns: Src Address, Origin, Destination
+	colWidth := availableWidth / 3
 
 	columns := []table.Column{
+		{Title: "Src Address", Width: colWidth},
 		{Title: "Origin", Width: colWidth},
 		{Title: "Destination", Width: colWidth},
 	}
@@ -157,10 +164,14 @@ func UpdateForwardsTable(t table.Model, width, height int) table.Model {
 	rows := []table.Row{}
 	forwards := GetAllDirectTCPIPs()
 	for _, fwd := range forwards {
+		srcAddr := fwd.SrcAddress
 		origin := fmt.Sprintf("%s:%d", fwd.OriginAddr, fwd.OriginPort)
 		dest := fmt.Sprintf("%s:%d", fwd.DestAddr, fwd.DestPort)
 
 		// Truncate if too long
+		if len(srcAddr) > colWidth {
+			srcAddr = srcAddr[:colWidth]
+		}
 		if len(origin) > colWidth {
 			origin = origin[:colWidth]
 		}
@@ -168,7 +179,7 @@ func UpdateForwardsTable(t table.Model, width, height int) table.Model {
 			dest = dest[:colWidth]
 		}
 
-		rows = append(rows, table.Row{origin, dest})
+		rows = append(rows, table.Row{srcAddr, origin, dest})
 	}
 
 	// Preserve current cursor position before updating

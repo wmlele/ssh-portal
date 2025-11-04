@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/charmbracelet/bubbles/help"
+	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
@@ -219,7 +221,7 @@ func UpdatePortsTable(t table.Model, width, height int) table.Model {
 }
 
 // RenderLeftPaneContent renders the complete left pane content including header and table
-func RenderLeftPaneContent(width int, portsTable table.Model) string {
+func RenderLeftPaneContent(width int, portsTable table.Model, helpModel help.Model) string {
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color("62")).
@@ -241,12 +243,33 @@ func RenderLeftPaneContent(width int, portsTable table.Model) string {
 		tableView = "  No port forwards configured"
 	}
 
+	// Create help key bindings
+	keys := []key.Binding{
+		key.NewBinding(
+			key.WithKeys("n"),
+			key.WithHelp("n", "new port forward"),
+		),
+		key.NewBinding(
+			key.WithKeys("d"),
+			key.WithHelp("d", "delete port forward"),
+		),
+		key.NewBinding(
+			key.WithKeys("up", "down"),
+			key.WithHelp("↑/↓", "navigate"),
+		),
+	}
+
+	// Render help view
+	helpView := helpModel.ShortHelpView(keys)
+
 	// Combine all parts
 	content := lipgloss.JoinVertical(
 		lipgloss.Left,
 		title,
 		info,
 		tableView,
+		"",
+		helpView,
 	)
 
 	return content

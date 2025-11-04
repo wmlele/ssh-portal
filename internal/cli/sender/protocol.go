@@ -54,20 +54,6 @@ type ConnectionResult struct {
 	ClientConfig *ssh.ClientConfig
 }
 
-// parseCode splits a combined code into relayCode and localSecret
-// Format: "relayCode-localSecret" where relayCode may contain dashes (e.g., "alpha-bravo-1234-XYZ123")
-// Splits on the LAST dash to handle relay codes that already contain dashes
-func parseCode(code string) (relayCode, fullCode string) {
-	fullCode = code
-	lastDash := strings.LastIndex(code, "-")
-	if lastDash > 0 {
-		relayCode = code[:lastDash]
-	} else {
-		relayCode = code
-	}
-	return relayCode, fullCode
-}
-
 // --- Entry point ---
 
 func ConnectAndHandshake(relayAddr, code string) (*ConnectionResult, error) {

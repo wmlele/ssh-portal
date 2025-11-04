@@ -26,6 +26,7 @@ import (
 // DirectTCPIP represents an active direct-tcpip forwarding connection
 type DirectTCPIP struct {
 	ID         string
+	SrcAddress string // Sender address from ready message
 	DestAddr   string
 	DestPort   uint32
 	OriginAddr string
@@ -179,9 +180,17 @@ func handleDirectTCPIP(ch ssh.NewChannel) {
 	channel, reqs, _ := ch.Accept()
 	go discard(reqs)
 
+	// Get sender address from state
+	state := GetState()
+	srcAddr := state.SenderAddr
+	if srcAddr == "" {
+		srcAddr = "unknown"
+	}
+
 	// Create and track the direct-tcpip connection
 	dtcp := &DirectTCPIP{
 		ID:         fmt.Sprintf("%d", time.Now().UnixNano()),
+		SrcAddress: srcAddr,
 		DestAddr:   msg.DestAddr,
 		DestPort:   msg.DestPort,
 		OriginAddr: msg.OriginAddr,
