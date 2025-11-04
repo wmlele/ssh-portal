@@ -3,6 +3,7 @@ package sender
 import (
 	"fmt"
 	"os"
+	"regexp"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
@@ -108,6 +109,15 @@ func newProfileMenuModel(profiles []Profile, needsCode bool) *profileMenuModel {
 					Validate(func(s string) error {
 						if s == "" {
 							return fmt.Errorf("code is required")
+						}
+						// Validate format: word-word-word-word-123-4567
+						pattern := `^[a-zA-Z0-9]+-[a-zA-Z0-9]+-[a-zA-Z0-9]+-[a-zA-Z0-9]+-\d{3}-\d{4}$`
+						matched, err := regexp.MatchString(pattern, s)
+						if err != nil {
+							return fmt.Errorf("invalid code format: %v", err)
+						}
+						if !matched {
+							return fmt.Errorf("code must be in format: word-word-word-word-123-4567")
 						}
 						return nil
 					}),
