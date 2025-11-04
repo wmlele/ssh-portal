@@ -277,8 +277,10 @@ func RenderLeftPaneContent(width int, portsTable table.Model, reversePortsTable 
 	content := lipgloss.JoinVertical(
 		lipgloss.Left,
 		headerDirect,
+		"", // Blank line between L->R header and table
 		directView,
 		headerReverse,
+		"", // Blank line between R->L header and table
 		reverseView,
 		"",
 		helpView,

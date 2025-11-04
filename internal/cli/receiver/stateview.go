@@ -269,6 +269,7 @@ func RenderRightPaneContent(width int, forwardsTable table.Model) string {
 	content := lipgloss.JoinVertical(
 		lipgloss.Left,
 		header,
+		"", // Blank line between R->L header and table
 		tableView,
 	)
 
