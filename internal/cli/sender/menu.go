@@ -48,18 +48,27 @@ func (k profileMenuKeyMap) ShortHelp() []key.Binding {
 }
 
 func newProfileMenuModel(profiles []Profile, needsCode bool) profileMenuModel {
-    items := make([]list.Item, 0, len(profiles))
-    for _, p := range profiles {
-        desc := p.Description
-        if desc == "" {
-            desc = fmt.Sprintf("Relay: %s", p.Relay)
-        }
-        items = append(items, profileMenuItem{
-            name:        p.Name,
-            description: desc,
-            id:          fmt.Sprintf("profile-%s", p.Name),
-        })
-    }
+	items := make([]list.Item, 0, len(profiles)+1)
+	
+	// Add "none" option first
+	items = append(items, profileMenuItem{
+		name:        "none",
+		description: "Use top-level configuration only (no profile)",
+		id:          "profile-none",
+	})
+	
+	// Add all profiles
+	for _, p := range profiles {
+		desc := p.Description
+		if desc == "" {
+			desc = fmt.Sprintf("Relay: %s", p.Relay)
+		}
+		items = append(items, profileMenuItem{
+			name:        p.Name,
+			description: desc,
+			id:          fmt.Sprintf("profile-%s", p.Name),
+		})
+	}
 
     l := list.New(items, list.NewDefaultDelegate(), 40, 14)
     l.Title = "Select Profile"
@@ -89,7 +98,7 @@ func newProfileMenuModel(profiles []Profile, needsCode bool) profileMenuModel {
             huh.NewGroup(
                 huh.NewInput().
                     Title("Connection Code").
-                    Description("Enter the connection code (eg: series-spell-lava-then-038-8307)").
+                    Description("Enter the connection code").
                     Placeholder("series-spell-lava-then-038-8307").
                     Value(&pm.formCode).
                     Validate(func(s string) error {
@@ -99,7 +108,7 @@ func newProfileMenuModel(profiles []Profile, needsCode bool) profileMenuModel {
                         return nil
                     }),
             ),
-        ).WithWidth(50)
+        ).WithWidth(80) // Wider form to ensure input field is visible
     }
 
     return pm
@@ -128,6 +137,13 @@ func (m profileMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				listHeight = 5
 			}
 			m.list.SetSize(availableWidth, listHeight)
+			// Update form width to match available width (accounting for border padding)
+			// Border has 1 char padding on each side, so subtract 2
+			formWidth := availableWidth - 2
+			if formWidth < 20 {
+				formWidth = 20
+			}
+			m.form = m.form.WithWidth(formWidth)
 		} else {
 			// Reduce by 2 lines even when no form to ensure border visibility
 			listHeight := availableHeight - 2
@@ -184,13 +200,14 @@ func (m profileMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.form = f
 				cmds = append(cmds, cmd)
 			}
-			// If form is complete, check if we have profile and code
+			// If form is complete, check if we have profile (or "none") and code
 			if m.form.State == huh.StateCompleted {
+				m.code = m.formCode
+				// If we have a profile selected (or "none"), we're done
 				if m.selected != "" {
-					// Extract code from form field
-					m.code = m.formCode
 					return m, tea.Quit
 				}
+				// Form complete but no profile selected - wait for profile selection
 			}
 			// Handle tab to switch between list and form
 			if msg.String() == "tab" {
@@ -324,12 +341,22 @@ func SelectProfile(profiles []Profile, needsCode bool) (*SelectProfileResult, er
 	}
 
 	if m, ok := finalModel.(profileMenuModel); ok {
-		if m.quitting && (m.selected == "" || (needsCode && m.code == "")) {
+		if m.quitting && (m.selected == "" && m.code == "") {
 			fmt.Fprintf(os.Stderr, "Profile selection cancelled\n")
 			os.Exit(1)
 		}
+		// If "none" was selected, set profile to empty string
+		profile := m.selected
+		if profile == "none" {
+			profile = ""
+		}
+		// If code is required but not provided, that's an error
+		if needsCode && m.code == "" {
+			fmt.Fprintf(os.Stderr, "Code is required\n")
+			os.Exit(1)
+		}
 		return &SelectProfileResult{
-			Profile: m.selected,
+			Profile: profile,
 			Code:    m.code,
 		}, nil
 	}
