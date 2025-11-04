@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -10,10 +11,11 @@ import (
 )
 
 var (
-	senderCode        string
-	senderRelayHost   string
-	senderRelayPort   int
-	senderInteractive bool
+	senderCode             string
+	senderRelayHost        string
+	senderRelayPort        int
+	senderInteractive      bool
+	senderKeepaliveTimeout string
 )
 
 var senderCmd = &cobra.Command{
@@ -27,7 +29,11 @@ var senderCmd = &cobra.Command{
 		if code == "" {
 			return fmt.Errorf("code is required (use --code flag or config)")
 		}
-		return sender.Run(senderRelayHost, senderRelayPort, code, senderInteractive)
+		keepaliveTimeout, err := time.ParseDuration(senderKeepaliveTimeout)
+		if err != nil {
+			return fmt.Errorf("invalid keepalive timeout: %w", err)
+		}
+		return sender.Run(senderRelayHost, senderRelayPort, code, senderInteractive, keepaliveTimeout)
 	},
 }
 
@@ -36,6 +42,7 @@ func init() {
 	senderCmd.Flags().StringVar(&senderRelayHost, "relay", "localhost", "Relay server host")
 	senderCmd.Flags().IntVar(&senderRelayPort, "relay-port", 4430, "Relay server TCP port")
 	senderCmd.Flags().BoolVar(&senderInteractive, "interactive", true, "interactive mode")
+	senderCmd.Flags().StringVar(&senderKeepaliveTimeout, "keepalive", "30s", "keepalive timeout (e.g., 30s, 1m)")
 	_ = viper.BindPFlag("sender.code", senderCmd.Flags().Lookup("code"))
 	_ = viper.BindEnv("sender.code", "SSH_PORTAL_SENDER_CODE")
 }

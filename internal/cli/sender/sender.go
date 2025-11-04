@@ -30,7 +30,7 @@ type activeForward struct {
 
 // --- Main client ---
 
-func startSSHClient(ctx context.Context, relayHost string, relayPort int, code string) error {
+func startSSHClient(ctx context.Context, relayHost string, relayPort int, code string, keepaliveTimeout time.Duration) error {
 	// Build relay TCP address
 	relayTCP := net.JoinHostPort(relayHost, strconv.Itoa(relayPort))
 
@@ -60,7 +60,6 @@ func startSSHClient(ctx context.Context, relayHost string, relayPort int, code s
 	log.Println("SSH connection established")
 
 	client := ssh.NewClient(cc, chans, reqs)
-	defer client.Close()
 
 	// Store SSH client for dynamic port forward management
 	sshClientMu.Lock()
@@ -69,26 +68,55 @@ func startSSHClient(ctx context.Context, relayHost string, relayPort int, code s
 
 	SetStatus("connected", "SSH connection established")
 
-	// Monitor connection for closure - check if client operations fail
+	// Monitor connection for closure and send keepalives
+	keepaliveInterval := 5 * time.Second
+	lastKeepalive := time.Now()
 	go func() {
-		// Monitor by periodically checking connection state
-		// or by detecting when a client operation fails
-		ticker := time.NewTicker(2 * time.Second)
+		ticker := time.NewTicker(keepaliveInterval)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				// Try to send a keepalive or check connection
-				_, _, err := client.SendRequest("keepalive@ssh-portal", false, nil)
-				if err != nil {
-					log.Printf("Receiver connection closed: %v", err)
+				// Send keepalive request
+				ok, _, err := client.SendRequest("keepalive@ssh-portal", true, nil)
+				if err != nil || !ok {
+					log.Printf("Keepalive failed, connection closed: %v", err)
 					SetStatus("failed", fmt.Sprintf("Connection closed: %v", err))
 					// Clear SSH client on connection failure
 					sshClientMu.Lock()
 					sshClient = nil
 					sshClientMu.Unlock()
+					closeAllActiveForwards()
+					closeAllReverseForwards()
+					client.Close()
+					return
+				}
+				lastKeepalive = time.Now()
+			}
+		}
+	}()
+
+	// Monitor for missed keepalives (connection health check)
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if time.Since(lastKeepalive) > keepaliveTimeout {
+					log.Printf("Keepalive timeout, connection appears dead")
+					SetStatus("failed", "Connection timeout")
+					// Clear SSH client
+					sshClientMu.Lock()
+					sshClient = nil
+					sshClientMu.Unlock()
+					closeAllActiveForwards()
+					closeAllReverseForwards()
+					client.Close()
 					return
 				}
 			}
@@ -98,11 +126,19 @@ func startSSHClient(ctx context.Context, relayHost string, relayPort int, code s
 	// Wait for context cancellation
 	<-ctx.Done()
 
-	// Cleanup: close all active forwards
+	// Cleanup: close all active forwards and reverse forwards
+	log.Printf("Shutting down sender, closing all connections...")
 	sshClientMu.Lock()
+	clientToClose := sshClient
 	sshClient = nil
 	sshClientMu.Unlock()
+
 	closeAllActiveForwards()
+	closeAllReverseForwards()
+
+	if clientToClose != nil {
+		clientToClose.Close()
+	}
 
 	return nil
 }
@@ -233,6 +269,23 @@ func closeAllActiveForwards() {
 	}
 }
 
+// closeAllReverseForwards closes all active reverse port forwards (used on disconnect)
+func closeAllReverseForwards() {
+	reverseFwdsMu.Lock()
+	reverseForwards := make([]*ReverseForward, 0, len(reverseFwds))
+	for id, rf := range reverseFwds {
+		reverseForwards = append(reverseForwards, rf)
+		delete(reverseFwds, id)
+	}
+	reverseFwdsMu.Unlock()
+
+	for _, rf := range reverseForwards {
+		if rf.Listener != nil {
+			rf.Listener.Close()
+		}
+	}
+}
+
 func interactiveShell(c *ssh.Client) error {
 	sess, err := c.NewSession()
 	if err != nil {
@@ -247,7 +300,7 @@ func interactiveShell(c *ssh.Client) error {
 }
 
 // Run executes the sender command
-func Run(relayHost string, relayPort int, code string, interactive bool) error {
+func Run(relayHost string, relayPort int, code string, interactive bool, keepaliveTimeout time.Duration) error {
 	if code == "" {
 		return fmt.Errorf("code is required")
 	}
@@ -265,7 +318,7 @@ func Run(relayHost string, relayPort int, code string, interactive bool) error {
 	// Start SSH client in a goroutine
 	errChan := make(chan error, 1)
 	go func() {
-		errChan <- startSSHClient(ctx, relayHost, relayPort, code)
+		errChan <- startSSHClient(ctx, relayHost, relayPort, code, keepaliveTimeout)
 	}()
 
 	// Wait for context cancellation or error

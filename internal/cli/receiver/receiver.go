@@ -166,8 +166,34 @@ func startSSHServer(relayHost string, relayPort int, enableSession bool) error {
 	log.Printf("SSH connection established with sender: %s", senderAddr)
 	SetSSHEstablished()
 
-	// Handle global requests (remote-forward control)
-	go handleGlobal(reqs, sshConn)
+	// Handle keepalive requests and monitor connection health
+	keepaliveTimeout := 30 * time.Second
+	lastKeepalive := time.Now()
+	keepaliveMu := &sync.Mutex{}
+
+	// Monitor for missed keepalives
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				keepaliveMu.Lock()
+				lastKeepaliveTime := lastKeepalive
+				keepaliveMu.Unlock()
+
+				if time.Since(lastKeepaliveTime) > keepaliveTimeout {
+					log.Printf("Keepalive timeout, sender connection appears dead, closing SSH connection")
+					SetError("Sender connection timeout")
+					sshConn.Close()
+					return
+				}
+			}
+		}
+	}()
+
+	// Handle global requests (remote-forward control and keepalive)
+	go handleGlobal(reqs, sshConn, keepaliveMu, &lastKeepalive)
 
 	// Handle channels
 	for ch := range chans {
@@ -372,9 +398,16 @@ func setWinsize(f *os.File, h, w uint32) {
 	_, _, _ = syscall.Syscall(syscall.SYS_IOCTL, f.Fd(), uintptr(syscall.TIOCSWINSZ), uintptr(unsafe.Pointer(ws)))
 }
 
-func handleGlobal(reqs <-chan *ssh.Request, conn *ssh.ServerConn) {
+func handleGlobal(reqs <-chan *ssh.Request, conn *ssh.ServerConn, keepaliveMu *sync.Mutex, lastKeepalive *time.Time) {
 	for req := range reqs {
 		switch req.Type {
+		case "keepalive@ssh-portal":
+			// Handle keepalive request
+			keepaliveMu.Lock()
+			*lastKeepalive = time.Now()
+			keepaliveMu.Unlock()
+			req.Reply(true, nil)
+			continue
 		case "tcpip-forward":
 			// Payload: string address_to_bind, uint32 port
 			var msg struct {
