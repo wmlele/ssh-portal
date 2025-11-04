@@ -1,0 +1,29 @@
+#!/bin/bash
+OUTPUT="./output/develop"
+STATIC=0
+
+VERSION=$(git describe --tags --always)
+COMMIT=$(git rev-parse --short HEAD)
+DATE=$(git log -1 --format=%ci | tr ' ' 'T' | cut -d'T' -f1-2)
+
+# Check for static flag
+if [ "$1" = "--static" ]; then
+    STATIC=1
+    shift
+fi
+
+echo "Building $OUTPUT"
+echo "Version: $VERSION"
+echo "Commit: $COMMIT"
+echo "Date: $DATE"
+
+if [ $STATIC -eq 1 ]; then
+    # Static build
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w -extldflags '-static' -X main.Version=$VERSION-static -X main.Commit=$COMMIT -X main.Date=$DATE" -o $OUTPUT ./cmd/main.go
+else
+    # Normal build
+    go build -ldflags="-s -w -X main.Version=$VERSION -X main.Commit=$COMMIT -X main.Date=$DATE" -buildmode=pie -o $OUTPUT ./cmd/main.go
+fi
+
+echo "Build complete"
+

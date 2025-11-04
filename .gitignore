@@ -50,6 +50,9 @@ configs/*.secrets.yaml
 *.swp
 *.swo
 
+dist/
+output/ 
+
 # OS cruft
 .DS_Store
 Thumbs.db

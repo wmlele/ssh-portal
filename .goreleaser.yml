@@ -1,0 +1,35 @@
+version: 2
+
+project_name: ssh-portal
+dist: ./output
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: ssh-portal
+    main: ./cmd/main.go
+    env:
+      - CGO_ENABLED=0        # turn off cgo for easy cross-compile
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X main.Version={{.Version}}
+      - -X main.Commit={{.ShortCommit}}
+      - -X main.Date={{.CommitDate}}      
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+  
+
+archives:
+  - formats: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      - LICENSE*
+universal_binaries:
+  - id: ssh-portal                # matches the build id above
+    replace: true            # replace the darwin slices with one fat binary
+
