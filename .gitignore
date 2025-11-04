@@ -56,3 +56,5 @@ output/
 # OS cruft
 .DS_Store
 Thumbs.db
+
+ssh-portal
