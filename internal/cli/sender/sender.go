@@ -302,6 +302,11 @@ func interactiveShell(c *ssh.Client) error {
 
 // Run executes the sender command
 func Run(relayHost string, relayPort int, code string, interactive bool, keepaliveTimeout time.Duration, identity string) error {
+	return RunWithConfig(relayHost, relayPort, code, interactive, keepaliveTimeout, identity, nil)
+}
+
+// RunWithConfig executes the sender command with configuration
+func RunWithConfig(relayHost string, relayPort int, code string, interactive bool, keepaliveTimeout time.Duration, identity string, cfg *Config) error {
 	if code == "" {
 		return fmt.Errorf("code is required")
 	}
@@ -318,9 +323,14 @@ func Run(relayHost string, relayPort int, code string, interactive bool, keepali
 
 	// Start SSH client in a goroutine
 	errChan := make(chan error, 1)
-    go func() {
-        errChan <- startSSHClient(ctx, relayHost, relayPort, code, keepaliveTimeout, identity)
-    }()
+	go func() {
+		errChan <- startSSHClient(ctx, relayHost, relayPort, code, keepaliveTimeout, identity)
+	}()
+
+	// Apply port forwards from config after SSH connection is established
+	if cfg != nil && (len(cfg.Local) > 0 || len(cfg.Remote) > 0) {
+		go applyConfigPortForwards(ctx, cfg)
+	}
 
 	// Wait for context cancellation or error
 	select {
@@ -336,5 +346,78 @@ func Run(relayHost string, relayPort int, code string, interactive bool, keepali
 		// In interactive mode, wait for user to quit
 		<-ctx.Done()
 		return nil
+	}
+}
+
+// applyConfigPortForwards applies port forwards from configuration once SSH is connected
+func applyConfigPortForwards(ctx context.Context, cfg *Config) {
+	// Wait for SSH connection to be established (poll until client is available)
+	maxWait := 30 * time.Second
+	checkInterval := 500 * time.Millisecond
+	ticker := time.NewTicker(checkInterval)
+	defer ticker.Stop()
+	timeout := time.After(maxWait)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-timeout:
+			log.Printf("SSH client not available after waiting, skipping config port forwards")
+			return
+		case <-ticker.C:
+			sshClientMu.RLock()
+			client := sshClient
+			sshClientMu.RUnlock()
+			if client != nil {
+				// SSH client is available, proceed to apply port forwards
+				applyPortForwards(cfg)
+				return
+			}
+		}
+	}
+}
+
+// applyPortForwards applies the port forwards from config
+func applyPortForwards(cfg *Config) {
+
+	// Apply local port forwards
+	for _, pf := range cfg.Local {
+		if pf.Bind != "" && pf.Target != "" {
+			id := RegisterPortForward(pf.Bind, pf.Target)
+			if id != "" {
+				log.Printf("Applied config local forward: %s -> %s", pf.Bind, pf.Target)
+			} else {
+				log.Printf("Failed to apply config local forward: %s -> %s", pf.Bind, pf.Target)
+			}
+		}
+	}
+
+	// Apply remote port forwards
+	for _, pf := range cfg.Remote {
+		if pf.Bind != "" && pf.Target != "" {
+			// Parse bind address (format: "host:port")
+			host, portStr, err := net.SplitHostPort(pf.Bind)
+			if err != nil {
+				log.Printf("Invalid bind address in config: %s: %v", pf.Bind, err)
+				continue
+			}
+			port, err := strconv.ParseUint(portStr, 10, 32)
+			if err != nil {
+				log.Printf("Invalid port in bind address: %s: %v", pf.Bind, err)
+				continue
+			}
+			// Default host to 0.0.0.0 if empty
+			if host == "" {
+				host = "0.0.0.0"
+			}
+			id, actualPort, err := StartReverseForward(host, uint32(port), pf.Target)
+			if err != nil {
+				log.Printf("Failed to apply config remote forward: %s -> %s: %v", pf.Bind, pf.Target, err)
+				continue
+			}
+			log.Printf("Applied config remote forward: %s -> %s (bound on port %d)", pf.Bind, pf.Target, actualPort)
+			_ = id // id is used internally
+		}
 	}
 }

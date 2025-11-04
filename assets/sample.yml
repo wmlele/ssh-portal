@@ -1,0 +1,22 @@
+sender:
+  relay: "relay.example.com"
+  relay-port: 4430
+  interactive: true
+  keepalive: "30s"
+  identity: "My Sender"
+  profiles:
+    - name: profile-1
+      description: "My Profile Description"
+      relay: "relay.example.com"
+      local: 
+        - bind: "127.0.0.1:10022"
+          target: "127.0.0.1:22"
+        - bind: "127.0.0.1:10023"
+          target: "127.0.0.1:23"
+      remote:
+        - bind: "127.0.0.1:2200"
+          target: "127.0.0.1:22"
+
+    - name: profile-2
+      description: "My Profile 2 Description"
+      relay: "relay.example.com"

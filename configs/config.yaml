@@ -1,5 +1,17 @@
+sender:
+  relay: "localhost"
+  identity: "Lele Forzani"
+  profiles:
+    - name: "test"
+      local: 
+        - bind: "127.0.0.1:10022"
+          target: "127.0.0.1:22"
+        - bind: "127.0.0.1:10023"
+          target: "127.0.0.1:23"
+      remote:
+        - bind: "127.0.0.1:2200"
+          target: "127.0.0.1:22"
+          
 log:
   level: info
 
-hello:
-  message: "from config file"
