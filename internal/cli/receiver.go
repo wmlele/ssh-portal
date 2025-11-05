@@ -35,10 +35,10 @@ var receiverCmd = &cobra.Command{
 }
 
 func init() {
-	receiverCmd.Flags().StringVar(&receiverRelayHost, "relay", "", "Relay server host (overrides config)")
-	receiverCmd.Flags().IntVar(&receiverRelayPort, "relay-port", 0, "Relay server TCP port (overrides config)")
-	receiverCmd.Flags().BoolVar(&receiverInteractive, "interactive", true, "interactive mode (overrides config)")
-	receiverCmd.Flags().BoolVar(&receiverSession, "session", false, "enable session handling (PTY/shell/exec) (overrides config)")
-	receiverCmd.Flags().BoolVar(&receiverLogView, "logview", true, "show log panel in interactive mode (overrides config)")
-	receiverCmd.Flags().StringVar(&receiverToken, "token", "", "optional token to send in hello message (overrides config)")
+	receiverCmd.Flags().StringVar(&receiverRelayHost, "relay", "", "Relay server host")
+	receiverCmd.Flags().IntVar(&receiverRelayPort, "relay-port", 0, "Relay server TCP port")
+	receiverCmd.Flags().BoolVar(&receiverInteractive, "interactive", true, "interactive mode")
+	receiverCmd.Flags().BoolVar(&receiverSession, "session", false, "enable session handling (PTY/shell/exec)")
+	receiverCmd.Flags().BoolVar(&receiverLogView, "logview", true, "show log panel in interactive mode")
+	receiverCmd.Flags().StringVar(&receiverToken, "token", "", "optional token to send in hello message")
 }

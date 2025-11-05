@@ -126,11 +126,11 @@ var senderCmd = &cobra.Command{
 
 func init() {
 	senderCmd.Flags().StringVarP(&senderCode, "code", "c", "", "connection code")
-	senderCmd.Flags().StringVar(&senderRelayHost, "relay", "", "Relay server host (overrides config)")
-	senderCmd.Flags().IntVar(&senderRelayPort, "relay-port", 0, "Relay server TCP port (overrides config)")
-	senderCmd.Flags().BoolVar(&senderInteractive, "interactive", false, "interactive mode (overrides config)")
-	senderCmd.Flags().StringVar(&senderKeepaliveTimeout, "keepalive", "", "keepalive timeout (e.g., 30s, 1m) (overrides config)")
-	senderCmd.Flags().StringVar(&senderIdentity, "identity", "", "sender identity label to display at receiver (overrides config)")
+	senderCmd.Flags().StringVar(&senderRelayHost, "relay", "", "Relay server host")
+	senderCmd.Flags().IntVar(&senderRelayPort, "relay-port", 0, "Relay server TCP port")
+	senderCmd.Flags().BoolVar(&senderInteractive, "interactive", false, "interactive mode")
+	senderCmd.Flags().StringVar(&senderKeepaliveTimeout, "keepalive", "", "keepalive timeout (e.g., 30s, 1m)")
+	senderCmd.Flags().StringVar(&senderIdentity, "identity", "", "sender identity label to display at receiver")
 	senderCmd.Flags().StringVar(&senderToken, "token", "", "optional token to send in hello message")
 	senderCmd.Flags().StringVar(&senderProfile, "profile", "", "profile name to use from config file")
 	senderCmd.Flags().BoolVar(&senderMenu, "menu", true, "show profile selection menu if profiles exist")

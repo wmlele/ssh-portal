@@ -6,6 +6,7 @@ The system is ideal for:
 - **Remote Support**: When a support technician needs to temporarily access a server or device behind a NAT/firewall
 - **NAT Traversal**: When both endpoints are behind NAT and cannot establish direct connections
 - **Temporary Access**: When you need to grant temporary SSH access to a network you don't have direct access to
+- **Development & Troubleshooting**: TCP/IP port forwarding enables accessing services behind firewalls for development and debugging
 - **On-Demand Connections**: Connection codes are time-limited and automatically expire
 
 The system uses human-readable  connection codes (e.g., `abandon-ability-able-about-123-4567`) for easy pairing and supports interactive terminal user interfaces (TUI) for real-time monitoring.

@@ -19,8 +19,13 @@ var (
 	cfgFile  string
 	logLevel string
 	rootCmd  = &cobra.Command{
-		Use:     "ssh-portal",
-		Short:   "A versatile console application",
+		Use:   "ssh-portal",
+		Short: "A wormhole portal for SSH",
+		Long: "A relay-based SSH connection system designed for scenarios where both the sender and receiver\n" +
+			"are behind NAT or firewalls, making direct connections impossible. It enables secure SSH connections\n" +
+			"through an intermediary relay server, allowing temporary remote access for remote support scenarios.\n" +
+			"Supports TCP/IP port forwarding (local and remote) for development and troubleshooting use cases.\n\n" +
+			"All command-line flags override values from configuration files.",
 		Version: version.String(),
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			// Load config (flags/env/config file/defaults)
@@ -62,12 +67,12 @@ func init() {
 	_ = viper.BindEnv("log.level", "ssh-portal_LOG_LEVEL")
 
 	// Add receiver flags to root command (since receiver is the default)
-	rootCmd.Flags().StringVar(&receiverRelayHost, "relay", "", "Relay server host (overrides config)")
-	rootCmd.Flags().IntVar(&receiverRelayPort, "relay-port", 0, "Relay server TCP port (overrides config)")
-	rootCmd.Flags().BoolVar(&receiverInteractive, "interactive", true, "interactive mode (overrides config)")
-	rootCmd.Flags().BoolVar(&receiverSession, "session", false, "enable session handling (PTY/shell/exec) (overrides config)")
-	rootCmd.Flags().BoolVar(&receiverLogView, "logview", true, "show log panel in interactive mode (overrides config)")
-	rootCmd.Flags().StringVar(&receiverToken, "token", "", "optional access token (overrides config)")
+	rootCmd.Flags().StringVar(&receiverRelayHost, "relay", "", "Relay server host")
+	rootCmd.Flags().IntVar(&receiverRelayPort, "relay-port", 0, "Relay server TCP port")
+	rootCmd.Flags().BoolVar(&receiverInteractive, "interactive", true, "interactive mode")
+	rootCmd.Flags().BoolVar(&receiverSession, "session", false, "enable session handling (PTY/shell/exec)")
+	rootCmd.Flags().BoolVar(&receiverLogView, "logview", true, "show log panel in interactive mode")
+	rootCmd.Flags().StringVar(&receiverToken, "token", "", "optional access token")
 
 	// Add subcommands
 	rootCmd.AddCommand(senderCmd)
