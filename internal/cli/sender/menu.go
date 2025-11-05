@@ -100,13 +100,15 @@ func (d *markedDelegate) Render(w io.Writer, m list.Model, index int, listItem l
 		descStyle = d.styles.SelectedDesc
 	}
 
-	// dot is driven by your model’s chosen item, not the cursor
+	// dot is driven by your model's chosen item, not the cursor
 	mark := ""
 	if it.id == d.selectedID {
-		mark = "• "
+		mark = lipgloss.NewStyle().Foreground(lipgloss.Color("201")).Render("• ")
 	}
 
-	title := titleStyle.Render(mark + it.Title())
+	// Create a style that only applies the color from titleStyle
+	titleColorStyle := lipgloss.NewStyle().Foreground(titleStyle.GetForeground())
+	title := titleStyle.Render(mark + titleColorStyle.Render(it.Title()))
 
 	var row string
 	if d.showDescription && it.Description() != "" {
@@ -162,12 +164,15 @@ func newProfileMenuModel(profiles []Profile, needsCode bool) *profileMenuModel {
 			Enter: key.NewBinding(key.WithKeys("enter", " "), key.WithHelp("enter", "select/confirm")),
 			Quit:  key.NewBinding(key.WithKeys("q", "ctrl+c", "esc"), key.WithHelp("q/esc", "cancel")),
 		},
-		selected:   "",
+		selected:   "none",
 		code:       "",
 		quitting:   false,
 		needsCode:  needsCode,
 		formActive: false, // Start with list focused, user can tab to form
 	}
+
+	// Set "none" as the default selected item
+	del.SetSelectedID("profile-none")
 
 	if needsCode {
 		pm.form = huh.NewForm(
