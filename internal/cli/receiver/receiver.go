@@ -611,7 +611,7 @@ func handleGlobal(reqs <-chan *ssh.Request, conn *ssh.ServerConn, keepaliveMu *s
 }
 
 // Run executes the receiver command
-func Run(relayHost string, relayPort int, interactive bool, session bool) error {
+func Run(relayHost string, relayPort int, interactive bool, session bool, logView bool) error {
 	log.Printf("Starting receiver version %s", version.String())
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -620,7 +620,7 @@ func Run(relayHost string, relayPort int, interactive bool, session bool) error 
 	if interactive {
 		// Start TUI for interactive mode
 		var err error
-		tuiDone, err = startTUI(ctx, cancel)
+		tuiDone, err = startTUI(ctx, cancel, logView)
 		if err != nil {
 			return fmt.Errorf("failed to start TUI: %w", err)
 		}

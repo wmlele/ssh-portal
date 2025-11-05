@@ -40,7 +40,8 @@ var (
 			relayPort, _ := cmd.Flags().GetInt("relay-port")
 			interactive, _ := cmd.Flags().GetBool("interactive")
 			session, _ := cmd.Flags().GetBool("session")
-			return receiver.Run(relayHost, relayPort, interactive, session)
+			logView, _ := cmd.Flags().GetBool("logview")
+			return receiver.Run(relayHost, relayPort, interactive, session, logView)
 		},
 	}
 )
@@ -60,6 +61,7 @@ func init() {
 	rootCmd.Flags().IntVar(&receiverRelayPort, "relay-port", 4430, "Relay server TCP port (HTTP will be on port+1)")
 	rootCmd.Flags().BoolVar(&receiverInteractive, "interactive", true, "interactive mode")
 	rootCmd.Flags().BoolVar(&receiverSession, "session", false, "enable session handling (PTY/shell/exec)")
+	rootCmd.Flags().BoolVar(&receiverLogView, "logview", true, "show log panel in interactive mode (default: true)")
 
 	// Add subcommands
 	rootCmd.AddCommand(senderCmd)

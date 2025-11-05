@@ -35,9 +35,10 @@ type receiverTUIModel struct {
 	width                int
 	height               int
 	ready                bool
+	showLogView          bool
 }
 
-func newReceiverTUIModel(logWriter *tui.LogTailWriter, cancel context.CancelFunc) *receiverTUIModel {
+func newReceiverTUIModel(logWriter *tui.LogTailWriter, cancel context.CancelFunc, showLogView bool) *receiverTUIModel {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("135"))
@@ -51,19 +52,23 @@ func newReceiverTUIModel(logWriter *tui.LogTailWriter, cancel context.CancelFunc
 		spinner:          sp,
 		connectedSpinner: connectedSp,
 		cancel:           cancel,
+		showLogView:      showLogView,
 	}
 }
 
 func (m *receiverTUIModel) Init() tea.Cmd {
-	// Initialize log viewer, spinner, and start ticker for updating top content
-	return tea.Batch(
-		m.logViewer.Init(),
+	// Initialize log viewer (if enabled), spinner, and start ticker for updating top content
+	cmds := []tea.Cmd{
 		m.spinner.Tick,
 		m.connectedSpinner.Tick,
 		tea.Tick(time.Millisecond*200, func(time.Time) tea.Msg {
 			return updateTopContentMsg{}
 		}),
-	)
+	}
+	if m.showLogView {
+		cmds = append(cmds, m.logViewer.Init())
+	}
+	return tea.Batch(cmds...)
 }
 
 type updateTopContentMsg struct{}
@@ -83,14 +88,21 @@ func (m *receiverTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.WindowSizeMsg:
-		// Split the screen: top section for state, bottom section for logs
+		// Split the screen: top section for state, bottom section for logs (if log view is enabled)
 		borderHeight := 2 // top + bottom border per section
 		borderWidth := 2  // left + right border
 		availableHeight := msg.Height - (borderHeight * 2)
 
-		// Calculate heights based on percentage split
-		topHeight := (availableHeight * topSectionHeight) / 100
-		bottomHeight := availableHeight - topHeight
+		// Calculate heights based on percentage split (only if log view is enabled)
+		var topHeight, bottomHeight int
+		if m.showLogView {
+			topHeight = (availableHeight * topSectionHeight) / 100
+			bottomHeight = availableHeight - topHeight
+		} else {
+			// If log view is disabled, use full height for top section
+			topHeight = availableHeight
+			bottomHeight = 0
+		}
 
 		// Split top section into left (info) and right (forwards table)
 		// Reserve space for divider (3 chars: space + divider + space) and borders
@@ -128,8 +140,10 @@ func (m *receiverTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Update top content with current data
 		m.updateTopContent()
 
-		// Update log viewer size
-		m.logViewer.SetSize(msg.Width, bottomHeight)
+		// Update log viewer size (only if log view is enabled)
+		if m.showLogView {
+			m.logViewer.SetSize(msg.Width, bottomHeight)
+		}
 
 		// Handle table and viewport updates
 		var tableCmd, table2Cmd, leftCmd, rightCmd tea.Cmd
@@ -189,10 +203,12 @@ func (m *receiverTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		// Handle log viewer updates
-		logCmd, handled := m.logViewer.Update(msg)
-		if handled && logCmd != nil {
-			cmds = append(cmds, logCmd)
+		// Handle log viewer updates (only if log view is enabled)
+		if m.showLogView {
+			logCmd, handled := m.logViewer.Update(msg)
+			if handled && logCmd != nil {
+				cmds = append(cmds, logCmd)
+			}
 		}
 	}
 
@@ -313,17 +329,22 @@ func (m *receiverTUIModel) View() string {
 	}
 
 	topRow := strings.Join(combinedLines, "\n")
-	bottomContent := m.logViewer.View()
 
 	topSection := splitStyle.
 		Width(m.width - 2).
 		Render(topRow)
 
-	bottomSection := splitStyle.
-		Width(m.width - 2).
-		Render(bottomContent)
-
-	result := lipgloss.JoinVertical(lipgloss.Left, header, topSection, bottomSection)
+	var result string
+	if m.showLogView {
+		bottomContent := m.logViewer.View()
+		bottomSection := splitStyle.
+			Width(m.width - 2).
+			Render(bottomContent)
+		result = lipgloss.JoinVertical(lipgloss.Left, header, topSection, bottomSection)
+	} else {
+		// If log view is disabled, only show header and top section
+		result = lipgloss.JoinVertical(lipgloss.Left, header, topSection)
+	}
 	lines := strings.Split(result, "\n")
 	expectedHeight := m.height
 	if len(lines) > expectedHeight {
@@ -336,7 +357,7 @@ func (m *receiverTUIModel) View() string {
 // startTUI starts the TUI in a goroutine and sets up log capture
 // When the TUI quits, it calls cancel to signal server shutdown
 // Returns a channel that will be closed when the TUI goroutine finishes
-func startTUI(ctx context.Context, cancel context.CancelFunc) (<-chan struct{}, error) {
+func startTUI(ctx context.Context, cancel context.CancelFunc, showLogView bool) (<-chan struct{}, error) {
 	originalOutput := log.Writer()
 
 	// Create log writer
@@ -346,7 +367,7 @@ func startTUI(ctx context.Context, cancel context.CancelFunc) (<-chan struct{}, 
 	log.SetOutput(logWriter)
 
 	// Create and start the TUI program
-	model := newReceiverTUIModel(logWriter, cancel)
+	model := newReceiverTUIModel(logWriter, cancel, showLogView)
 	p := tea.NewProgram(model, tea.WithAltScreen())
 
 	// Channel to signal when TUI goroutine finishes
