@@ -20,6 +20,7 @@ const (
 	maxLogLines      = 500 // Keep last 500 lines in memory
 	topSectionHeight = 70  // Percentage of available height for top section (rest goes to logs)
 	leftSectionWidth = 40  // Percentage of available width for left section (info), rest goes to right (forwards)
+	tuiUpdateInterval = 200 * time.Millisecond // Interval for updating TUI content
 )
 
 // TUI model for receiver
@@ -61,7 +62,7 @@ func (m *receiverTUIModel) Init() tea.Cmd {
 	cmds := []tea.Cmd{
 		m.spinner.Tick,
 		m.connectedSpinner.Tick,
-		tea.Tick(time.Millisecond*200, func(time.Time) tea.Msg {
+		tea.Tick(tuiUpdateInterval, func(time.Time) tea.Msg {
 			return updateTopContentMsg{}
 		}),
 	}

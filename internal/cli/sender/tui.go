@@ -20,9 +20,10 @@ import (
 )
 
 const (
-	maxLogLines      = 500 // Keep last 500 lines in memory
-	topSectionHeight = 70  // Percentage of available height for top section (rest goes to logs)
-	leftSectionWidth = 70  // Percentage of available width for left section (ports), rest goexfs to right (state)
+	maxLogLines       = 500                    // Keep last 500 lines in memory
+	topSectionHeight  = 70                     // Percentage of available height for top section (rest goes to logs)
+	leftSectionWidth  = 70                     // Percentage of available width for left section (ports), rest goexfs to right (state)
+	tuiUpdateInterval = 500 * time.Millisecond // Interval for updating TUI content
 )
 
 // TUI model for sender
@@ -72,7 +73,7 @@ func (m *senderTUIModel) Init() tea.Cmd {
 		m.logViewer.Init(),
 		m.connectingSpinner.Tick,
 		m.connectedSpinner.Tick,
-		tea.Tick(time.Millisecond*500, func(time.Time) tea.Msg {
+		tea.Tick(tuiUpdateInterval, func(time.Time) tea.Msg {
 			return updateTopContentMsg{}
 		}),
 	)
@@ -127,11 +128,11 @@ func (m *senderTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							m.revFormData = ReverseForwardForm{}
 							m.updateTopContent()
 							if formCmd != nil {
-								return m, tea.Batch(formCmd, tea.Tick(time.Millisecond*500, func(time.Time) tea.Msg {
+								return m, tea.Batch(formCmd, tea.Tick(time.Millisecond*200, func(time.Time) tea.Msg {
 									return updateTopContentMsg{}
 								}))
 							}
-							return m, tea.Tick(time.Millisecond*500, func(time.Time) tea.Msg {
+							return m, tea.Tick(time.Millisecond*200, func(time.Time) tea.Msg {
 								return updateTopContentMsg{}
 							})
 						}
@@ -149,11 +150,11 @@ func (m *senderTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							m.formData = PortForwardForm{}
 							m.updateTopContent()
 							if formCmd != nil {
-								return m, tea.Batch(formCmd, tea.Tick(time.Millisecond*500, func(time.Time) tea.Msg {
+								return m, tea.Batch(formCmd, tea.Tick(time.Millisecond*200, func(time.Time) tea.Msg {
 									return updateTopContentMsg{}
 								}))
 							}
-							return m, tea.Tick(time.Millisecond*500, func(time.Time) tea.Msg {
+							return m, tea.Tick(time.Millisecond*200, func(time.Time) tea.Msg {
 								return updateTopContentMsg{}
 							})
 						}
@@ -177,7 +178,7 @@ func (m *senderTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.revFormData = ReverseForwardForm{}
 				m.updateTopContent()
 				// Restart the automatic content update ticker
-				return m, tea.Tick(time.Millisecond*500, func(time.Time) tea.Msg {
+				return m, tea.Tick(time.Millisecond*200, func(time.Time) tea.Msg {
 					return updateTopContentMsg{}
 				})
 			case "ctrl+c", "q":
@@ -285,8 +286,8 @@ func (m *senderTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.activeTable = 0 // Start with direct forwards focused
 			m.updateTableFocus()
 		} else {
-			m.portsTable = UpdatePortsTable(m.portsTable, leftWidth, topTableHeight)
-			m.reversePortsTable = UpdateReverseForwardsTable(m.reversePortsTable, leftWidth, bottomTableHeight)
+			m.portsTable = UpdatePortsTable(m.portsTable, leftWidth, topTableHeight, m.activeTable == 0)
+			m.reversePortsTable = UpdateReverseForwardsTable(m.reversePortsTable, leftWidth, bottomTableHeight, m.activeTable == 1)
 			m.leftViewport.Width = leftWidth
 			m.leftViewport.Height = topHeight
 			m.rightViewport.Width = rightWidth
@@ -332,7 +333,7 @@ func (m *senderTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Continue ticker only if form is not shown
 		if !m.showForm {
-			return m, tea.Tick(time.Millisecond*500, func(time.Time) tea.Msg {
+			return m, tea.Tick(time.Millisecond*200, func(time.Time) tea.Msg {
 				return updateTopContentMsg{}
 			})
 		}
@@ -496,7 +497,7 @@ func (m *senderTUIModel) handleFormMessage(msg tea.Msg) (tea.Cmd, bool) {
 					m.formKind = ""
 					m.revFormData = ReverseForwardForm{}
 					m.updateTopContent()
-					return tea.Tick(time.Millisecond*500, func(time.Time) tea.Msg {
+					return tea.Tick(time.Millisecond*200, func(time.Time) tea.Msg {
 						return updateTopContentMsg{}
 					}), true
 				}
@@ -513,7 +514,7 @@ func (m *senderTUIModel) handleFormMessage(msg tea.Msg) (tea.Cmd, bool) {
 					m.formKind = ""
 					m.formData = PortForwardForm{}
 					m.updateTopContent()
-					return tea.Tick(time.Millisecond*500, func(time.Time) tea.Msg {
+					return tea.Tick(time.Millisecond*200, func(time.Time) tea.Msg {
 						return updateTopContentMsg{}
 					}), true
 				}
@@ -581,14 +582,14 @@ func (m *senderTUIModel) updateTopContent() {
 		}
 		topTableHeight := availableTableHeight / 2
 		bottomTableHeight := availableTableHeight - topTableHeight
-		m.portsTable = UpdatePortsTable(m.portsTable, tableWidth, topTableHeight)
-		m.reversePortsTable = UpdateReverseForwardsTable(m.reversePortsTable, tableWidth, bottomTableHeight)
+		m.portsTable = UpdatePortsTable(m.portsTable, tableWidth, topTableHeight, m.activeTable == 0)
+		m.reversePortsTable = UpdateReverseForwardsTable(m.reversePortsTable, tableWidth, bottomTableHeight, m.activeTable == 1)
 		m.updateTableFocus()
 
 		// Update help width
 		m.help.Width = m.leftViewport.Width
 		// Render left pane: both tables with headers + help
-		leftContent = RenderLeftPaneContent(m.leftViewport.Width, m.portsTable, m.reversePortsTable, m.help)
+		leftContent = RenderLeftPaneContent(m.leftViewport.Width, m.portsTable, m.reversePortsTable, m.help, m.activeTable)
 	}
 	m.leftViewport.SetContent(leftContent)
 

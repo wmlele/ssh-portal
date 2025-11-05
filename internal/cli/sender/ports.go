@@ -186,7 +186,7 @@ func NewPortsTable(width, height int) table.Model {
 }
 
 // UpdatePortsTable updates the table with current port forwards data
-func UpdatePortsTable(t table.Model, width, height int) table.Model {
+func UpdatePortsTable(t table.Model, width, height int, isActive bool) table.Model {
 	// Compute sizes and columns
 	width, height, columnWidth := clampTableSize(width, height)
 
@@ -216,6 +216,30 @@ func UpdatePortsTable(t table.Model, width, height int) table.Model {
 		t.SetCursor(0)
 	}
 
+	// Update header border color based on active state
+	s := table.DefaultStyles()
+	// Default border color (subtle gray)
+	defaultBorderColor := lipgloss.Color("240")
+	// Focused border color (bright blue/purple - more visible)
+	focusedBorderColor := lipgloss.Color("135") // Brighter purple/blue
+
+	borderColor := defaultBorderColor
+	if isActive {
+		borderColor = focusedBorderColor
+	}
+
+	s.Header = s.Header.
+		BorderStyle(lipgloss.NormalBorder()).
+		BorderForeground(borderColor).
+		BorderBottom(true).
+		Bold(true).
+		Foreground(lipgloss.Color("62"))
+	s.Selected = s.Selected.
+		Foreground(lipgloss.Color("230")).
+		Background(lipgloss.Color("62")).
+		Bold(false)
+	t.SetStyles(s)
+
 	// Ensure table remains focused
 	t.Focus()
 
@@ -223,7 +247,8 @@ func UpdatePortsTable(t table.Model, width, height int) table.Model {
 }
 
 // RenderLeftPaneContent renders the complete left pane content including headers and both tables
-func RenderLeftPaneContent(width int, portsTable table.Model, reversePortsTable table.Model, helpModel help.Model) string {
+// activeTable: 0 = direct forwards, 1 = reverse forwards
+func RenderLeftPaneContent(width int, portsTable table.Model, reversePortsTable table.Model, helpModel help.Model, activeTable int) string {
 	// Get port forward statistics
 	forwards := GetAllPortForwards()
 	directCount := len(forwards)

@@ -294,7 +294,7 @@ func NewReverseForwardsTable(width, height int) table.Model {
 }
 
 // UpdateReverseForwardsTable updates the reverse forwards table with current data
-func UpdateReverseForwardsTable(t table.Model, width, height int) table.Model {
+func UpdateReverseForwardsTable(t table.Model, width, height int, isActive bool) table.Model {
 	width, height, columnWidth := clampTableSize(width, height)
 
 	columns := []table.Column{
@@ -326,6 +326,30 @@ func UpdateReverseForwardsTable(t table.Model, width, height int) table.Model {
 	} else {
 		t.SetCursor(0)
 	}
+
+	// Update header border color based on active state
+	s := table.DefaultStyles()
+	// Default border color (subtle gray)
+	defaultBorderColor := lipgloss.Color("240")
+	// Focused border color (bright blue/purple - more visible)
+	focusedBorderColor := lipgloss.Color("135") // Brighter purple/blue
+	
+	borderColor := defaultBorderColor
+	if isActive {
+		borderColor = focusedBorderColor
+	}
+	
+	s.Header = s.Header.
+		BorderStyle(lipgloss.NormalBorder()).
+		BorderForeground(borderColor).
+		BorderBottom(true).
+		Bold(true).
+		Foreground(lipgloss.Color("62"))
+	s.Selected = s.Selected.
+		Foreground(lipgloss.Color("230")).
+		Background(lipgloss.Color("62")).
+		Bold(false)
+	t.SetStyles(s)
 
 	return t
 }

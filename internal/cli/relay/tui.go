@@ -18,6 +18,7 @@ const (
 	maxLogLines      = 500 // Keep last 500 lines in memory
 	topSectionHeight = 60  // Percentage of available height for top section (rest goes to logs)
 	leftSectionWidth = 30  // Percentage of available width for left section (invites), rest goes to right (splices)
+	tuiUpdateInterval = 500 * time.Millisecond // Interval for updating TUI content
 )
 
 // TUI model for relay
@@ -44,7 +45,7 @@ func (m *relayTUIModel) Init() tea.Cmd {
 	// Initialize log viewer and start ticker for updating top content
 	return tea.Batch(
 		m.logViewer.Init(),
-		tea.Tick(time.Millisecond*500, func(time.Time) tea.Msg {
+		tea.Tick(tuiUpdateInterval, func(time.Time) tea.Msg {
 			return updateTopContentMsg{}
 		}),
 	)
