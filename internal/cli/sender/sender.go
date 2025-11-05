@@ -32,7 +32,7 @@ type activeForward struct {
 
 // --- Main client ---
 
-func startSSHClient(ctx context.Context, relayHost string, relayPort int, code string, keepaliveTimeout time.Duration, identity string) error {
+func startSSHClient(ctx context.Context, relayHost string, relayPort int, code string, keepaliveTimeout time.Duration, identity string, token string) error {
 	// Build relay TCP address
 	relayTCP := net.JoinHostPort(relayHost, strconv.Itoa(relayPort))
 
@@ -41,7 +41,7 @@ func startSSHClient(ctx context.Context, relayHost string, relayPort int, code s
 
 	// Connect and perform protocol handshake
 	// Provide hello metadata: keepalive seconds and optional identity
-	result, err := ConnectAndHandshake(relayTCP, code, int(keepaliveTimeout/time.Second), identity)
+	result, err := ConnectAndHandshake(relayTCP, code, int(keepaliveTimeout/time.Second), identity, token)
 	if err != nil {
 		SetStatus("failed", fmt.Sprintf("Handshake failed: %v", err))
 		log.Printf("handshake failed: %v", err)
@@ -303,12 +303,12 @@ func interactiveShell(c *ssh.Client) error {
 }
 
 // Run executes the sender command
-func Run(relayHost string, relayPort int, code string, interactive bool, keepaliveTimeout time.Duration, identity string) error {
-	return RunWithConfig(relayHost, relayPort, code, interactive, keepaliveTimeout, identity, nil)
+func Run(relayHost string, relayPort int, code string, interactive bool, keepaliveTimeout time.Duration, identity string, token string) error {
+	return RunWithConfig(relayHost, relayPort, code, interactive, keepaliveTimeout, identity, token, nil)
 }
 
 // RunWithConfig executes the sender command with configuration
-func RunWithConfig(relayHost string, relayPort int, code string, interactive bool, keepaliveTimeout time.Duration, identity string, cfg *Config) error {
+func RunWithConfig(relayHost string, relayPort int, code string, interactive bool, keepaliveTimeout time.Duration, identity string, token string, cfg *Config) error {
 	log.Printf("Starting sender version %s", version.String())
 	if code == "" {
 		return fmt.Errorf("code is required")
@@ -330,7 +330,7 @@ func RunWithConfig(relayHost string, relayPort int, code string, interactive boo
 	// Start SSH client in a goroutine
 	errChan := make(chan error, 1)
 	go func() {
-		errChan <- startSSHClient(ctx, relayHost, relayPort, code, keepaliveTimeout, identity)
+		errChan <- startSSHClient(ctx, relayHost, relayPort, code, keepaliveTimeout, identity, token)
 	}()
 
 	// Apply port forwards from config after SSH connection is established

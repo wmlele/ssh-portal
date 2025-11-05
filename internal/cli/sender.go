@@ -19,6 +19,7 @@ var (
 	senderIdentity         string
 	senderProfile          string
 	senderMenu             bool
+	senderToken            string
 )
 
 var senderCmd = &cobra.Command{
@@ -104,6 +105,11 @@ var senderCmd = &cobra.Command{
 			identity = senderIdentity
 		}
 
+		token := mergedCfg.Token
+		if cmd.Flags().Changed("token") && senderToken != "" {
+			token = senderToken
+		}
+
 		// Get code (required)
 		code := senderCode
 		if code == "" {
@@ -114,7 +120,7 @@ var senderCmd = &cobra.Command{
 		}
 
 		// Run sender with merged configuration
-		return sender.RunWithConfig(relayHost, relayPort, code, interactive, keepaliveTimeout, identity, mergedCfg)
+		return sender.RunWithConfig(relayHost, relayPort, code, interactive, keepaliveTimeout, identity, token, mergedCfg)
 	},
 }
 
@@ -125,6 +131,7 @@ func init() {
 	senderCmd.Flags().BoolVar(&senderInteractive, "interactive", false, "interactive mode (overrides config)")
 	senderCmd.Flags().StringVar(&senderKeepaliveTimeout, "keepalive", "", "keepalive timeout (e.g., 30s, 1m) (overrides config)")
 	senderCmd.Flags().StringVar(&senderIdentity, "identity", "", "sender identity label to display at receiver (overrides config)")
+	senderCmd.Flags().StringVar(&senderToken, "token", "", "optional token to send in hello message")
 	senderCmd.Flags().StringVar(&senderProfile, "profile", "", "profile name to use from config file")
 	senderCmd.Flags().BoolVar(&senderMenu, "menu", true, "show profile selection menu if profiles exist")
 	_ = viper.BindPFlag("sender.code", senderCmd.Flags().Lookup("code"))

@@ -114,7 +114,7 @@ func cleanupConnections() {
 	reverseTCPIPMu.Unlock()
 }
 
-func startSSHServer(relayHost string, relayPort int, enableSession bool, interactive bool) error {
+func startSSHServer(relayHost string, relayPort int, enableSession bool, interactive bool, token string) error {
 	// 1) Generate host key (ephemeral; persist if you want TOFU)
 	_, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -133,7 +133,7 @@ func startSSHServer(relayHost string, relayPort int, enableSession bool, interac
 	// 2) Connect to relay and perform protocol handshake (hello + await)
 	relayAddr := net.JoinHostPort(relayHost, strconv.Itoa(relayPort))
 	log.Printf("Connecting to relay: %s", relayAddr)
-	connResult, helloResp, err := ConnectToRelay(relayHost, relayPort, fp)
+	connResult, helloResp, err := ConnectToRelay(relayHost, relayPort, fp, token)
 	if err != nil {
 		SetError(fmt.Sprintf("relay connection issue: %v", err))
 		log.Printf("relay connection issue: %v", err)
@@ -614,7 +614,7 @@ func handleGlobal(reqs <-chan *ssh.Request, conn *ssh.ServerConn, keepaliveMu *s
 }
 
 // Run executes the receiver command
-func Run(relayHost string, relayPort int, interactive bool, session bool, logView bool) error {
+func Run(relayHost string, relayPort int, interactive bool, session bool, logView bool, token string) error {
 	log.Printf("Starting receiver version %s", version.String())
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -637,7 +637,7 @@ func Run(relayHost string, relayPort int, interactive bool, session bool, logVie
 				log.Printf("Context cancelled, stopping receiver")
 				return
 			default:
-				err := startSSHServer(relayHost, relayPort, session, interactive)
+				err := startSSHServer(relayHost, relayPort, session, interactive, token)
 				if err == nil {
 					// Should not happen, but if it does, exit
 					log.Printf("SSH server returned without error, exiting")

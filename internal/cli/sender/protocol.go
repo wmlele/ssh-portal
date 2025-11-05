@@ -34,6 +34,7 @@ type JSONHello struct {
 	Code string `json:"code,omitempty"`
 	RID  string `json:"rid,omitempty"`
     Sender *SenderInfo `json:"sender,omitempty"`
+	Token string `json:"token,omitempty"`
 }
 
 // JSONOKResponse is the JSON success response sent back by the relay
@@ -65,7 +66,7 @@ type SenderInfo struct {
 
 // --- Entry point ---
 
-func ConnectAndHandshake(relayAddr, code string, senderKASeconds int, senderIdentity string) (*ConnectionResult, error) {
+func ConnectAndHandshake(relayAddr, code string, senderKASeconds int, senderIdentity string, token string) (*ConnectionResult, error) {
 	// Parse code to separate relay code from local secret
 	relayCode, _, fullCode, _ := usercode.ParseUserCode(code)
 
@@ -81,6 +82,10 @@ func ConnectAndHandshake(relayAddr, code string, senderKASeconds int, senderIden
 		return nil, fmt.Errorf("send version: %w", err)
 	}
 	hello := JSONHello{Msg: "hello", Role: "sender", Code: relayCode}
+	// Attach optional token
+	if token != "" {
+		hello.Token = token
+	}
 	// Attach optional sender metadata
 	if senderKASeconds > 0 || senderIdentity != "" {
 		// Encode identity as base64 to avoid JSON issues with special characters

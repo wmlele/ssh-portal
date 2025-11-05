@@ -25,6 +25,7 @@ type HelloRequest struct {
 	Msg        string `json:"msg"` // "hello"
 	Role       string `json:"role"`
 	ReceiverFP string `json:"receiver_fp"`
+	Token      string `json:"token,omitempty"`
 }
 
 type HelloResponse struct {
@@ -66,7 +67,7 @@ type ConnectionResult struct {
 // Returns the connection and invite information
 // relayHost is the relay server host
 // relayPort is the TCP port (HTTP will be on port+1)
-func ConnectToRelay(relayHost string, relayPort int, receiverFP string) (*ConnectionResult, *HelloResponse, error) {
+func ConnectToRelay(relayHost string, relayPort int, receiverFP string, token string) (*ConnectionResult, *HelloResponse, error) {
 	// 1) Connect TCP
 	relayTCP := net.JoinHostPort(relayHost, strconv.Itoa(relayPort))
 	conn, err := net.Dial("tcp", relayTCP)
@@ -78,7 +79,11 @@ func ConnectToRelay(relayHost string, relayPort int, receiverFP string) (*Connec
 		conn.Close()
 		return nil, nil, fmt.Errorf("failed to send version: %w", err)
 	}
-	if err := json.NewEncoder(conn).Encode(HelloRequest{Msg: "hello", Role: "receiver", ReceiverFP: receiverFP}); err != nil {
+	helloReq := HelloRequest{Msg: "hello", Role: "receiver", ReceiverFP: receiverFP}
+	if token != "" {
+		helloReq.Token = token
+	}
+	if err := json.NewEncoder(conn).Encode(helloReq); err != nil {
 		conn.Close()
 		return nil, nil, fmt.Errorf("failed to send hello: %w", err)
 	}

@@ -12,15 +12,16 @@ type PortForwardConfig struct {
 
 // Profile represents a sender profile configuration
 type Profile struct {
-	Name        string                `yaml:"name"`
-	Description string                `yaml:"description,omitempty"`
-	Relay       string                `yaml:"relay,omitempty"`
-	RelayPort   int                   `yaml:"relay-port,omitempty"`
-	Interactive *bool                 `yaml:"interactive,omitempty"`
-	Keepalive   string                `yaml:"keepalive,omitempty"`
-	Identity    string                `yaml:"identity,omitempty"`
-	Local       []PortForwardConfig   `yaml:"local,omitempty"`
-	Remote      []PortForwardConfig   `yaml:"remote,omitempty"`
+	Name        string              `yaml:"name"`
+	Description string              `yaml:"description,omitempty"`
+	Relay       string              `yaml:"relay,omitempty"`
+	RelayPort   int                 `yaml:"relay-port,omitempty"`
+	Interactive *bool               `yaml:"interactive,omitempty"`
+	Keepalive   string              `yaml:"keepalive,omitempty"`
+	Identity    string              `yaml:"identity,omitempty"`
+	Token       string              `yaml:"token,omitempty"`
+	Local       []PortForwardConfig `yaml:"local,omitempty"`
+	Remote      []PortForwardConfig `yaml:"remote,omitempty"`
 }
 
 // SenderConfig represents the top-level sender configuration
@@ -30,6 +31,7 @@ type SenderConfig struct {
 	Interactive *bool     `yaml:"interactive,omitempty"`
 	Keepalive   string    `yaml:"keepalive,omitempty"`
 	Identity    string    `yaml:"identity,omitempty"`
+	Token       string    `yaml:"token,omitempty"`
 	Profiles    []Profile `yaml:"profiles,omitempty"`
 }
 
@@ -40,6 +42,7 @@ type Config struct {
 	Interactive bool
 	Keepalive   time.Duration
 	Identity    string
+	Token       string
 	Local       []PortForwardConfig
 	Remote      []PortForwardConfig
 }
@@ -51,7 +54,8 @@ func MergeConfig(topLevel *SenderConfig, profile *Profile) *Config {
 		RelayPort:   4430,
 		Interactive: true,
 		Keepalive:   30 * time.Second,
-		Identity:   "",
+		Identity:    "",
+		Token:       "",
 		Local:       []PortForwardConfig{},
 		Remote:      []PortForwardConfig{},
 	}
@@ -75,6 +79,9 @@ func MergeConfig(topLevel *SenderConfig, profile *Profile) *Config {
 		if topLevel.Identity != "" {
 			cfg.Identity = topLevel.Identity
 		}
+		if topLevel.Token != "" {
+			cfg.Token = topLevel.Token
+		}
 	}
 
 	// Apply profile config (overrides top-level)
@@ -96,6 +103,9 @@ func MergeConfig(topLevel *SenderConfig, profile *Profile) *Config {
 		if profile.Identity != "" {
 			cfg.Identity = profile.Identity
 		}
+		if profile.Token != "" {
+			cfg.Token = profile.Token
+		}
 		if len(profile.Local) > 0 {
 			cfg.Local = profile.Local
 		}
@@ -106,4 +116,3 @@ func MergeConfig(topLevel *SenderConfig, profile *Profile) *Config {
 
 	return cfg
 }
-
