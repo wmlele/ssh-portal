@@ -53,7 +53,7 @@ func (m *receiverTUIModel) Init() tea.Cmd {
 	return tea.Batch(
 		m.logViewer.Init(),
 		m.spinner.Tick,
-		tea.Tick(time.Millisecond*100, func(time.Time) tea.Msg {
+		tea.Tick(time.Millisecond*500, func(time.Time) tea.Msg {
 			return updateTopContentMsg{}
 		}),
 	)
@@ -145,7 +145,7 @@ func (m *receiverTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case updateTopContentMsg:
 		m.updateTopContent()
-		return m, tea.Tick(time.Millisecond*100, func(time.Time) tea.Msg {
+		return m, tea.Tick(time.Millisecond*500, func(time.Time) tea.Msg {
 			return updateTopContentMsg{}
 		})
 
