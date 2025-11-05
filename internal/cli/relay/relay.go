@@ -14,7 +14,7 @@ import (
 )
 
 // ====== TCP rendezvous/splice ======
-func tcpServe(ctx context.Context, addr string) error {
+func tcpServe(ctx context.Context, addr string, receiverToken string) error {
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return err
@@ -39,7 +39,7 @@ func tcpServe(ctx context.Context, addr string) error {
 				}
 			}
 			log.Printf("[TCP] new connection from %s", c.RemoteAddr())
-			go handleTCP(c)
+			go handleTCP(c, receiverToken)
 		}
 	}()
 
@@ -59,7 +59,7 @@ func tcpServe(ctx context.Context, addr string) error {
 	}
 }
 
-func handleTCP(c net.Conn) {
+func handleTCP(c net.Conn, receiverToken string) {
 	remoteAddr := c.RemoteAddr().String()
 
 	// Parse version + first JSON message (hello or mint)
@@ -74,6 +74,15 @@ func handleTCP(c net.Conn) {
 	switch msg.Role {
 	case "receiver":
 		if msg.Msg == "hello" {
+			// Validate receiver token if configured
+			if receiverToken != "" {
+				if msg.Token != receiverToken {
+					log.Printf("[TCP] %s -> ERR: receiver token mismatch", remoteAddr)
+					SendErrorResponse(c, "invalid-token")
+					c.Close()
+					return
+				}
+			}
 			// Mint invite and attach this connection as the receiver
 			ttl := 10 * time.Minute
 			if msg.TTLSeconds > 0 && msg.TTLSeconds <= 3600 {
@@ -244,7 +253,8 @@ func spliceConnections(receiver, sender net.Conn, splice *Splice) {
 
 // Run executes the relay command
 // port is the TCP port number; HTTP will be served on port+1
-func Run(port int, interactive bool) error {
+// receiverToken is an optional token that receivers must provide in hello messages
+func Run(port int, interactive bool, receiverToken string) error {
 	log.Printf("Starting relay version %s", version.String())
 	tcpAddr := fmt.Sprintf(":%d", port)
 
@@ -259,7 +269,7 @@ func Run(port int, interactive bool) error {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		if err := tcpServe(ctx, tcpAddr); err != nil {
+		if err := tcpServe(ctx, tcpAddr, receiverToken); err != nil {
 			log.Printf("TCP server error: %v", err)
 			cancel() // Signal shutdown on error
 		}

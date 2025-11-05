@@ -28,13 +28,14 @@ func (bc *bufferedConn) Read(p []byte) (int, error) {
 
 // JSON protocol messages
 type EndpointMessage struct {
-	Msg        string `json:"msg"`  // "hello", "await"
-	Role       string `json:"role"` // "sender" or "receiver"
-	Code       string `json:"code,omitempty"`
-	RID        string `json:"rid,omitempty"`
-	ReceiverFP string `json:"receiver_fp,omitempty"`
-	TTLSeconds int    `json:"ttl_seconds,omitempty"`
-    Sender     *SenderInfo `json:"sender,omitempty"`
+	Msg        string      `json:"msg"`  // "hello", "await"
+	Role       string      `json:"role"` // "sender" or "receiver"
+	Code       string      `json:"code,omitempty"`
+	RID        string      `json:"rid,omitempty"`
+	ReceiverFP string      `json:"receiver_fp,omitempty"`
+	TTLSeconds int         `json:"ttl_seconds,omitempty"`
+	Token      string      `json:"token,omitempty"`
+	Sender     *SenderInfo `json:"sender,omitempty"`
 }
 
 type OKResponse struct {
@@ -59,18 +60,18 @@ type HelloOKResponse struct {
 
 // ReadyMessage is sent to receiver when sender connects
 type ReadyMessage struct {
-	Msg         string `json:"msg"` // "ready"
-	SenderAddr  string `json:"sender_addr"`
-	Fingerprint string `json:"fp"`
-	Exp         int64  `json:"exp"`
-	Alg         string `json:"alg,omitempty"`
-    Sender      *SenderInfo `json:"sender,omitempty"`
+	Msg         string      `json:"msg"` // "ready"
+	SenderAddr  string      `json:"sender_addr"`
+	Fingerprint string      `json:"fp"`
+	Exp         int64       `json:"exp"`
+	Alg         string      `json:"alg,omitempty"`
+	Sender      *SenderInfo `json:"sender,omitempty"`
 }
 
 // SenderInfo mirrors the sender metadata provided in the initial hello
 type SenderInfo struct {
-    Keepalive int    `json:"keepalive,omitempty"`
-    Identity  string `json:"identity,omitempty"`
+	Keepalive int    `json:"keepalive,omitempty"`
+	Identity  string `json:"identity,omitempty"`
 }
 
 // ParseMessage reads the version line and a single JSON payload message.
@@ -207,14 +208,14 @@ func HandleSender(c net.Conn, code string, meta *SenderInfo) *Invite {
 		SendErrorResponse(c, "not-ready")
 		c.Close()
 		return nil
-    }
+	}
 
-    // Attach sender metadata to invite for forwarding to receiver
-    if meta != nil {
-        LockInvites()
-        inv.Sender = meta
-        UnlockInvites()
-    }
+	// Attach sender metadata to invite for forwarding to receiver
+	if meta != nil {
+		LockInvites()
+		inv.Sender = meta
+		UnlockInvites()
+	}
 
 	// Send authentication response if not already sent
 	if !inv.sentOK {
@@ -226,5 +227,5 @@ func HandleSender(c net.Conn, code string, meta *SenderInfo) *Invite {
 		log.Printf("[TCP] %s -> sender authenticated: code=%s fp=%s", remoteAddr, code, inv.ReceiverFP)
 	}
 
-    return inv
+	return inv
 }
