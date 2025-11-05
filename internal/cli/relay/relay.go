@@ -73,16 +73,16 @@ func handleTCP(c net.Conn) {
 	// Dispatch to appropriate handler
 	switch msg.Role {
 	case "receiver":
-		if msg.Msg == "mint" {
+		if msg.Msg == "hello" {
 			// Mint invite and attach this connection as the receiver
 			ttl := 10 * time.Minute
 			if msg.TTLSeconds > 0 && msg.TTLSeconds <= 3600 {
 				ttl = time.Duration(msg.TTLSeconds) * time.Second
 			}
 			inv := MintInvite(msg.ReceiverFP, ttl)
-			log.Printf("[MINT] receiver connected: fp=%s code=%s rid=%s expires=%s", msg.ReceiverFP, inv.Code, inv.RID, inv.ExpiresAt.Format(time.RFC3339))
-			// Reply with mint_ok
-			_ = sendJSON(c, MintOKResponse{Msg: "mint_ok", Code: inv.Code, RID: inv.RID, Exp: inv.ExpiresAt.Unix()})
+			log.Printf("[HELLO] receiver connected: fp=%s code=%s rid=%s expires=%s", msg.ReceiverFP, inv.Code, inv.RID, inv.ExpiresAt.Format(time.RFC3339))
+			// Reply with hello_ok
+			_ = sendJSON(c, HelloOKResponse{Msg: "hello_ok", Code: inv.Code, RID: inv.RID, Exp: inv.ExpiresAt.Unix()})
 			// Attach this connection as receiver
 			LockInvites()
 			inv.ReceiverConn = newBufferedConn(c, br)

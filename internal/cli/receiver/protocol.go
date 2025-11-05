@@ -20,15 +20,15 @@ type AwaitMessage struct {
 	RID  string `json:"rid,omitempty"`
 }
 
-// JSON mint message/response over TCP
-type MintRequest struct {
-	Msg        string `json:"msg"` // "mint"
+// JSON hello message/response over TCP
+type HelloRequest struct {
+	Msg        string `json:"msg"` // "hello"
 	Role       string `json:"role"`
 	ReceiverFP string `json:"receiver_fp"`
 }
 
-type MintResponse struct {
-	Msg  string `json:"msg"` // "mint_ok"
+type HelloResponse struct {
+	Msg  string `json:"msg"` // "hello_ok"
 	Code string `json:"code"`
 	RID  string `json:"rid"`
 	Exp  int64  `json:"exp"`
@@ -74,33 +74,33 @@ type ConnectionResult struct {
 // Returns the connection and invite information
 // relayHost is the relay server host
 // relayPort is the TCP port (HTTP will be on port+1)
-func ConnectToRelay(relayHost string, relayPort int, receiverFP string) (*ConnectionResult, *MintResponse, error) {
+func ConnectToRelay(relayHost string, relayPort int, receiverFP string) (*ConnectionResult, *HelloResponse, error) {
 	// 1) Connect TCP
 	relayTCP := net.JoinHostPort(relayHost, strconv.Itoa(relayPort))
 	conn, err := net.Dial("tcp", relayTCP)
 	if err != nil {
 		return nil, nil, fmt.Errorf("socket error: %w", err)
 	}
-	// 2) Send version + JSON mint
+	// 2) Send version + JSON hello
 	if _, err := fmt.Fprintln(conn, "ssh-relay/1.0"); err != nil {
 		conn.Close()
 		return nil, nil, fmt.Errorf("failed to send version: %w", err)
 	}
-	if err := json.NewEncoder(conn).Encode(MintRequest{Msg: "mint", Role: "receiver", ReceiverFP: receiverFP}); err != nil {
+	if err := json.NewEncoder(conn).Encode(HelloRequest{Msg: "hello", Role: "receiver", ReceiverFP: receiverFP}); err != nil {
 		conn.Close()
-		return nil, nil, fmt.Errorf("failed to send mint: %w", err)
+		return nil, nil, fmt.Errorf("failed to send hello: %w", err)
 	}
-	// 3) Read mint_ok response
+	// 3) Read hello_ok response
 	br := bufio.NewReader(conn)
 	line, err := br.ReadString('\n')
 	if err != nil {
 		conn.Close()
-		return nil, nil, fmt.Errorf("failed to read mint response: %w", err)
+		return nil, nil, fmt.Errorf("failed to read hello response: %w", err)
 	}
-	var m MintResponse
-	if err := json.Unmarshal([]byte(line), &m); err != nil || m.Msg != "mint_ok" {
+	var m HelloResponse
+	if err := json.Unmarshal([]byte(line), &m); err != nil || m.Msg != "hello_ok" {
 		conn.Close()
-		return nil, nil, fmt.Errorf("bad mint response")
+		return nil, nil, fmt.Errorf("bad hello response")
 	}
 
 	// 4) On same connection, send await with RID to attach

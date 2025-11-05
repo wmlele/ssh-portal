@@ -130,10 +130,10 @@ func startSSHServer(relayHost string, relayPort int, enableSession bool, interac
 	}
 	fp := ssh.FingerprintSHA256(signer.PublicKey())
 
-	// 2) Connect to relay and perform protocol handshake (mint + hello)
+	// 2) Connect to relay and perform protocol handshake (hello + await)
 	relayAddr := net.JoinHostPort(relayHost, strconv.Itoa(relayPort))
 	log.Printf("Connecting to relay: %s", relayAddr)
-	connResult, mintResp, err := ConnectToRelay(relayHost, relayPort, fp)
+	connResult, helloResp, err := ConnectToRelay(relayHost, relayPort, fp)
 	if err != nil {
 		SetError(fmt.Sprintf("relay connection issue: %v", err))
 		log.Printf("relay connection issue: %v", err)
@@ -152,18 +152,18 @@ func startSSHServer(relayHost string, relayPort int, enableSession bool, interac
 		return err
 	}
 
-	userCode, fullCode, err := usercode.GenerateUserCode(mintResp.Code, localSecret)
+	userCode, fullCode, err := usercode.GenerateUserCode(helloResp.Code, localSecret)
 	if err != nil {
 		SetError(fmt.Sprintf("failed to generate user code: %v", err))
 		log.Printf("failed to generate user code: %v", err)
 		return err
 	}
 
-	SetState(userCode, mintResp.Code, localSecret, mintResp.RID, fp)
+	SetState(userCode, helloResp.Code, localSecret, helloResp.RID, fp)
 	if !interactive {
 		fmt.Println("Code      :", userCode)
-		fmt.Println("RelayCode :", mintResp.Code)
-		fmt.Println("RID       :", mintResp.RID)
+		fmt.Println("RelayCode :", helloResp.Code)
+		fmt.Println("RID       :", helloResp.RID)
 		fmt.Println("FP        :", fp)
 		fmt.Println("Waiting for sender to connect...")
 	}
@@ -199,7 +199,7 @@ func startSSHServer(relayHost string, relayPort int, enableSession bool, interac
 	// 5) Setup SSH server over the connection (now ready for SSH handshake)
 	cfg := &ssh.ServerConfig{
 		PasswordCallback: func(c ssh.ConnMetadata, pass []byte) (*ssh.Permissions, error) {
-			expectedUsername := mintResp.Code
+			expectedUsername := helloResp.Code
 			expectedPassword := fullCode
 			if c.User() != expectedUsername || string(pass) != expectedPassword {
 				// Log when sender connects but fails authentication

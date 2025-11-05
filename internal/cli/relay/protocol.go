@@ -28,7 +28,7 @@ func (bc *bufferedConn) Read(p []byte) (int, error) {
 
 // JSON protocol messages
 type EndpointMessage struct {
-	Msg        string `json:"msg"`  // "hello", "await", or "mint"
+	Msg        string `json:"msg"`  // "hello", "await"
 	Role       string `json:"role"` // "sender" or "receiver"
 	Code       string `json:"code,omitempty"`
 	RID        string `json:"rid,omitempty"`
@@ -49,9 +49,9 @@ type ErrorResponse struct {
 	Err string `json:"error"`
 }
 
-// MintOKResponse is sent back to a receiver after a successful mint
-type MintOKResponse struct {
-	Msg  string `json:"msg"` // "mint_ok"
+// HelloOKResponse is sent back to a receiver after a successful hello
+type HelloOKResponse struct {
+	Msg  string `json:"msg"` // "hello_ok"
 	Code string `json:"code"`
 	RID  string `json:"rid"`
 	Exp  int64  `json:"exp"`
@@ -112,8 +112,8 @@ func ParseMessage(c net.Conn) (*EndpointMessage, *bufio.Reader, error) {
 	if payload.Msg == "await" && payload.Role == "receiver" && payload.RID == "" {
 		return nil, nil, fmt.Errorf("missing rid for receiver")
 	}
-	if payload.Msg == "mint" && (payload.Role != "receiver" || payload.ReceiverFP == "") {
-		return nil, nil, fmt.Errorf("invalid mint message (need receiver_fp)")
+	if payload.Msg == "hello" && payload.Role == "receiver" && payload.ReceiverFP == "" {
+		return nil, nil, fmt.Errorf("invalid hello message (need receiver_fp)")
 	}
 
 	return &payload, br, nil
