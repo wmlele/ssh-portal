@@ -21,11 +21,13 @@ var (
 	rootCmd  = &cobra.Command{
 		Use:   "ssh-portal",
 		Short: "A wormhole portal for SSH",
-		Long: "A relay-based SSH connection system designed for scenarios where both the sender and receiver\n" +
+		Long: "\n · \033[1;38;5;213mssh-portal\033[0m: A wormhole portal for SSH\n\033[38;5;141m" +
+			"   --------------------------------------\033[0m\n\n" +
+			"A relay-based SSH connection system designed for scenarios where both the sender and receiver\n" +
 			"are behind NAT or firewalls, making direct connections impossible. It enables secure SSH connections\n" +
-			"through an intermediary relay server, allowing temporary remote access for remote support scenarios.\n" +
+			"through an intermediary relay server, allowing temporary remote access for remote support scenarios.\n\n" +
 			"Supports TCP/IP port forwarding (local and remote) for development and troubleshooting use cases.\n\n" +
-			"All command-line flags override values from configuration files.",
+			"\033[38;5;244mAll command-line flags override values from configuration files.\033[0m",
 		Version: version.String(),
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			// Load config (flags/env/config file/defaults)
