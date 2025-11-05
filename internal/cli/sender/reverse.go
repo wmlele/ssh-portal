@@ -12,6 +12,8 @@ import (
 	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
+
+	"ssh-portal/internal/cli/validate"
 )
 
 // ReverseForward represents a remote (ssh -R) port forward requested by the sender.
@@ -36,6 +38,21 @@ var (
 // localTarget is the address on the sender machine to forward connections to (e.g., 127.0.0.1:22).
 // Returns the forward ID and the actual bound port.
 func StartReverseForward(bindAddr string, bindPort uint32, localTarget string) (string, uint32, error) {
+	// Validate bindAddr (host only, port is separate)
+	if err := validate.ValidateHost(bindAddr); err != nil {
+		return "", 0, fmt.Errorf("invalid bind address: %w", err)
+	}
+
+	// Validate bindPort (0 is allowed for auto-assign)
+	if bindPort > 65535 {
+		return "", 0, fmt.Errorf("bind port must be between 0 and 65535, got %d", bindPort)
+	}
+
+	// Validate localTarget (full address)
+	if err := validate.ValidateAddress(localTarget, "local target"); err != nil {
+		return "", 0, err
+	}
+	
 	sshClientMu.RLock()
 	client := sshClient
 	sshClientMu.RUnlock()

@@ -13,6 +13,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
+	"ssh-portal/internal/cli/validate"
 	"ssh-portal/internal/version"
 )
 
@@ -148,6 +149,24 @@ func startSSHClient(ctx context.Context, relayHost string, relayPort int, code s
 
 // createLocalForward creates a new local port forward and immediately starts forwarding traffic
 func createLocalForward(pfID, listen, target string) error {
+	// Validate pfID
+	if pfID == "" {
+		return fmt.Errorf("port forward ID cannot be empty")
+	}
+	if len(pfID) > 256 {
+		return fmt.Errorf("port forward ID too long (max 256 characters)")
+	}
+
+	// Validate listen address
+	if err := validate.ValidateAddress(listen, "listen"); err != nil {
+		return err
+	}
+
+	// Validate target address
+	if err := validate.ValidateAddress(target, "target"); err != nil {
+		return err
+	}
+
 	sshClientMu.RLock()
 	client := sshClient
 	sshClientMu.RUnlock()
