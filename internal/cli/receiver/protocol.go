@@ -50,14 +50,6 @@ type SenderInfo struct {
 	Identity  string `json:"identity,omitempty"`
 }
 
-// OKResponse is the response sent by relay after hello
-type OKResponse struct {
-	Msg string `json:"msg"` // "ok"
-	FP  string `json:"fp,omitempty"`
-	Exp int64  `json:"exp,omitempty"`
-	Alg string `json:"alg,omitempty"`
-}
-
 // ConnectionResult holds the result of connecting to the relay
 type ConnectionResult struct {
 	Conn         net.Conn
