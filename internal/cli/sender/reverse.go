@@ -52,7 +52,7 @@ func StartReverseForward(bindAddr string, bindPort uint32, localTarget string) (
 	if err := validate.ValidateAddress(localTarget, "local target"); err != nil {
 		return "", 0, err
 	}
-	
+
 	sshClientMu.RLock()
 	client := sshClient
 	sshClientMu.RUnlock()
@@ -104,8 +104,21 @@ func StartReverseForward(bindAddr string, bindPort uint32, localTarget string) (
 				}
 				defer lc.Close()
 				// Bridge both directions
-				go io.Copy(lc, remoteConn)
-				_, _ = io.Copy(remoteConn, lc)
+				// Copy from remote to local in background
+				errChan := make(chan error, 1)
+				go func() {
+					_, err := io.Copy(lc, remoteConn)
+					errChan <- err
+				}()
+				// Copy from local to remote (blocking)
+				_, err = io.Copy(remoteConn, lc)
+				// Wait for the other direction and log errors (EOF is expected/normal)
+				if err2 := <-errChan; err2 != nil && err2 != io.EOF {
+					log.Printf("[SENDER R-FWD] copy error (remote->local): %v", err2)
+				}
+				if err != nil && err != io.EOF {
+					log.Printf("[SENDER R-FWD] copy error (local->remote): %v", err)
+				}
 			}(rc)
 		}
 	}(id, ln, localTarget)

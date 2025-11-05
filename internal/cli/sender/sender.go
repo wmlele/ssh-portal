@@ -48,7 +48,8 @@ func startSSHClient(ctx context.Context, relayHost string, relayPort int, code s
 		log.Printf("handshake failed: %v", err)
 		return err
 	}
-	defer result.Conn.Close()
+	// Don't defer close here - once SSH client is created, it owns the connection
+	// We'll close it via client.Close() in the cleanup path
 
 	log.Printf("Connected to relay: %s", relayTCP)
 	SetStatus("connecting", "Establishing SSH connection...")
@@ -56,6 +57,8 @@ func startSSHClient(ctx context.Context, relayHost string, relayPort int, code s
 	// Establish SSH connection
 	cc, chans, reqs, err := ssh.NewClientConn(result.SSHConn, "paired", result.ClientConfig)
 	if err != nil {
+		// Close connection on error since SSH client creation failed
+		result.Conn.Close()
 		SetStatus("failed", fmt.Sprintf("SSH connection failed: %v", err))
 		log.Printf("SSH connection failed: %v", err)
 		return err
