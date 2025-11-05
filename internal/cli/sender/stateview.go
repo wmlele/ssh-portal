@@ -46,9 +46,14 @@ func RenderStateView(width int, connectingSp spinner.Model, connectedSp spinner.
 	switch state.Status {
 	case "connecting":
 		spinnerView := connectingSp.View()
-		content = "\n" + spinnerView + " Connecting"
+		connectingStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("220")). // Yellow shade
+			Bold(true)
+		content = "\n" + spinnerView + " " + connectingStyle.Render("Connecting...")
 		if state.Message != "" {
-			content += "\n" + state.Message
+			messageStyle := lipgloss.NewStyle().
+				Foreground(lipgloss.Color("75")) // Bluish color
+			content += "\n" + messageStyle.Render(state.Message)
 		}
 	case "connected":
 		spinnerView := connectedSp.View()
@@ -57,14 +62,21 @@ func RenderStateView(width int, connectingSp spinner.Model, connectedSp spinner.
 			Bold(true)
 		content = "\n" + spinnerView + " " + connectedStyle.Render("Connected")
 		if state.Message != "" {
-			content += "\n" + state.Message
+			messageStyle := lipgloss.NewStyle().
+				Foreground(lipgloss.Color("75")) // Bluish color
+			content += "\n" + messageStyle.Render(state.Message)
 		}
 	case "failed":
-		content = "\nStatus: Failed"
+		failedStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("160")). // Red shade
+			Bold(true)
+		content = "\nStatus: " + failedStyle.Render("Failed")
 		if state.Message != "" {
-			content += "\nError: " + state.Message
+			errorStyle := lipgloss.NewStyle().
+				Foreground(lipgloss.Color("196")) // Bright red
+			content += "\nError: " + errorStyle.Render(state.Message)
 		}
-		content += "\n\nPress 'q' or Ctrl+C to quit"
+		content += "\n\nPress 'q' to quit"
 	default:
 		content = "\nStatus: Unknown"
 	}
