@@ -62,7 +62,6 @@ func init() {
 	rootCmd.Flags().BoolVar(&receiverSession, "session", false, "enable session handling (PTY/shell/exec)")
 
 	// Add subcommands
-	rootCmd.AddCommand(testmenuCmd)
 	rootCmd.AddCommand(senderCmd)
 	rootCmd.AddCommand(receiverCmd)
 	rootCmd.AddCommand(relayCmd)

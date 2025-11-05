@@ -5,7 +5,8 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
-	"encoding/binary"
+
+	//"encoding/binary"
 	"fmt"
 	"io"
 	"log"
@@ -14,9 +15,10 @@ import (
 	"os/exec"
 	"strconv"
 	"sync"
-	"syscall"
+
+	//	"syscall"
 	"time"
-	"unsafe"
+	//	"unsafe"
 
 	"github.com/creack/pty"
 	"golang.org/x/crypto/ssh"
@@ -374,9 +376,9 @@ func handleSession(ch ssh.Channel, in <-chan *ssh.Request) {
 	for req := range in {
 		switch req.Type {
 		case "pty-req":
-			term, w, h := parsePtyReq(req.Payload)
+			//term, w, h := parsePtyReq(req.Payload)
 			shell = exec.Command(userShell())
-			shell.Env = append(os.Environ(), "TERM="+term)
+			//shell.Env = append(os.Environ(), "TERM="+term)
 			f, err := pty.Start(shell)
 			if err != nil {
 				req.Reply(false, nil)
@@ -384,7 +386,7 @@ func handleSession(ch ssh.Channel, in <-chan *ssh.Request) {
 				return
 			}
 			ptyFile = f
-			setWinsize(ptyFile, h, w)
+			//			setWinsize(ptyFile, h, w)
 			go io.Copy(ptyFile, ch)
 			go func() { io.Copy(ch, ptyFile); ch.Close() }()
 			req.Reply(true, nil)
@@ -415,8 +417,8 @@ func handleSession(ch ssh.Channel, in <-chan *ssh.Request) {
 			req.Reply(true, nil)
 		case "window-change":
 			if ptyFile != nil {
-				_, w, h := parseWinChg(req.Payload)
-				setWinsize(ptyFile, h, w)
+				//_, w, h := parseWinChg(req.Payload)
+				//				setWinsize(ptyFile, h, w)
 			}
 		default:
 			req.Reply(false, nil)
@@ -432,7 +434,7 @@ func userShell() string {
 }
 
 // unmarshalString parses an SSH string: 4-byte length (big-endian) + string data
-func unmarshalString(b []byte) (string, []byte, error) {
+/* func unmarshalString(b []byte) (string, []byte, error) {
 	if len(b) < 4 {
 		return "", nil, fmt.Errorf("insufficient data for string length")
 	}
@@ -463,11 +465,12 @@ func parseWinChg(b []byte) (w, c, r uint32) {
 	c = unmarshalUint32(b)     // cols
 	r = unmarshalUint32(b[4:]) // rows
 	return 0, c, r
-}
-func setWinsize(f *os.File, h, w uint32) {
+} */
+
+/* func setWinsize(f *os.File, h, w uint32) {
 	ws := &struct{ Row, Col, X, Y uint16 }{uint16(h), uint16(w), 0, 0}
 	_, _, _ = syscall.Syscall(syscall.SYS_IOCTL, f.Fd(), uintptr(syscall.TIOCSWINSZ), uintptr(unsafe.Pointer(ws)))
-}
+} */
 
 func handleGlobal(reqs <-chan *ssh.Request, conn *ssh.ServerConn, keepaliveMu *sync.Mutex, lastKeepalive *time.Time) {
 	for req := range reqs {
