@@ -10,6 +10,7 @@ var (
 	relayPort          int
 	relayInteractive   bool
 	relayReceiverToken string
+	relaySenderToken   string
 )
 
 var relayCmd = &cobra.Command{
@@ -22,9 +23,10 @@ var relayCmd = &cobra.Command{
 			Port:          relayPort,
 			Interactive:   relayInteractive,
 			ReceiverToken: relayReceiverToken,
+			SenderToken:   relaySenderToken,
 		})
 
-		return relay.Run(merged.Port, merged.Interactive, merged.ReceiverToken)
+		return relay.Run(merged.Port, merged.Interactive, merged.ReceiverToken, merged.SenderToken)
 	},
 }
 
@@ -32,4 +34,5 @@ func init() {
 	relayCmd.Flags().IntVar(&relayPort, "port", 0, "TCP port for relay server (overrides config)")
 	relayCmd.Flags().BoolVar(&relayInteractive, "interactive", true, "interactive mode (overrides config)")
 	relayCmd.Flags().StringVar(&relayReceiverToken, "receiver-token", "", "optional token that receivers must provide in hello messages (overrides config)")
+	relayCmd.Flags().StringVar(&relaySenderToken, "sender-token", "", "optional token that senders must provide in hello messages (overrides config)")
 }

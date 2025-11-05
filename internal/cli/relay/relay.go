@@ -14,7 +14,7 @@ import (
 )
 
 // ====== TCP rendezvous/splice ======
-func tcpServe(ctx context.Context, addr string, receiverToken string) error {
+func tcpServe(ctx context.Context, addr string, receiverToken string, senderToken string) error {
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return err
@@ -39,7 +39,7 @@ func tcpServe(ctx context.Context, addr string, receiverToken string) error {
 				}
 			}
 			log.Printf("[TCP] new connection from %s", c.RemoteAddr())
-			go handleTCP(c, receiverToken)
+			go handleTCP(c, receiverToken, senderToken)
 		}
 	}()
 
@@ -59,7 +59,7 @@ func tcpServe(ctx context.Context, addr string, receiverToken string) error {
 	}
 }
 
-func handleTCP(c net.Conn, receiverToken string) {
+func handleTCP(c net.Conn, receiverToken string, senderToken string) {
 	remoteAddr := c.RemoteAddr().String()
 
 	// Parse version + first JSON message (hello or mint)
@@ -101,6 +101,17 @@ func handleTCP(c net.Conn, receiverToken string) {
 		}
 		handleReceiverConnection(c, msg.RID, br)
 	case "sender":
+		if msg.Msg == "hello" {
+			// Validate sender token if configured
+			if senderToken != "" {
+				if msg.Token != senderToken {
+					log.Printf("[TCP] %s -> ERR: sender token mismatch", remoteAddr)
+					SendErrorResponse(c, "invalid-token")
+					c.Close()
+					return
+				}
+			}
+		}
 		handleSenderConnection(c, msg, br)
 	default:
 		log.Printf("[TCP] %s -> ERR: unknown role '%s'", remoteAddr, msg.Role)
@@ -254,7 +265,8 @@ func spliceConnections(receiver, sender net.Conn, splice *Splice) {
 // Run executes the relay command
 // port is the TCP port number; HTTP will be served on port+1
 // receiverToken is an optional token that receivers must provide in hello messages
-func Run(port int, interactive bool, receiverToken string) error {
+// senderToken is an optional token that senders must provide in hello messages
+func Run(port int, interactive bool, receiverToken string, senderToken string) error {
 	log.Printf("Starting relay version %s", version.String())
 	tcpAddr := fmt.Sprintf(":%d", port)
 
@@ -269,7 +281,7 @@ func Run(port int, interactive bool, receiverToken string) error {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		if err := tcpServe(ctx, tcpAddr, receiverToken); err != nil {
+		if err := tcpServe(ctx, tcpAddr, receiverToken, senderToken); err != nil {
 			log.Printf("TCP server error: %v", err)
 			cancel() // Signal shutdown on error
 		}

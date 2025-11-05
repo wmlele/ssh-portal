@@ -10,6 +10,7 @@ type RelayConfig struct {
 	Port          int    `yaml:"port,omitempty" mapstructure:"port,omitempty"`
 	Interactive   *bool  `yaml:"interactive,omitempty" mapstructure:"interactive,omitempty"`
 	ReceiverToken string `yaml:"receiver-token,omitempty" mapstructure:"receiver-token,omitempty"`
+	SenderToken   string `yaml:"sender-token,omitempty" mapstructure:"sender-token,omitempty"`
 }
 
 // LoadRelayConfig loads relay configuration from viper
@@ -30,6 +31,7 @@ type RelayFlags struct {
 	Port          int
 	Interactive   bool
 	ReceiverToken string
+	SenderToken   string
 }
 
 func MergeRelayFlags(cmd *cobra.Command, cfg *RelayConfig, flags RelayFlags) RelayFlags {
@@ -37,6 +39,7 @@ func MergeRelayFlags(cmd *cobra.Command, cfg *RelayConfig, flags RelayFlags) Rel
 		Port:          4430,
 		Interactive:   true,
 		ReceiverToken: "",
+		SenderToken:   "",
 	}
 
 	// Apply config values as defaults
@@ -50,6 +53,9 @@ func MergeRelayFlags(cmd *cobra.Command, cfg *RelayConfig, flags RelayFlags) Rel
 		if cfg.ReceiverToken != "" {
 			result.ReceiverToken = cfg.ReceiverToken
 		}
+		if cfg.SenderToken != "" {
+			result.SenderToken = cfg.SenderToken
+		}
 	}
 
 	// CLI flags override config
@@ -61,6 +67,9 @@ func MergeRelayFlags(cmd *cobra.Command, cfg *RelayConfig, flags RelayFlags) Rel
 	}
 	if cmd.Flags().Changed("receiver-token") {
 		result.ReceiverToken = flags.ReceiverToken
+	}
+	if cmd.Flags().Changed("sender-token") {
+		result.SenderToken = flags.SenderToken
 	}
 
 	return result
