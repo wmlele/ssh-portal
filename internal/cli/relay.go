@@ -7,20 +7,26 @@ import (
 )
 
 var (
-	relayPort         int
-	relayInteractive  bool
+	relayPort        int
+	relayInteractive bool
 )
 
 var relayCmd = &cobra.Command{
 	Use:   "relay",
 	Short: "Relay command",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return relay.Run(relayPort, relayInteractive)
+		// Load relay config and merge with flags
+		cfg := relay.LoadRelayConfig()
+		merged := relay.MergeRelayFlags(cmd, cfg, relay.RelayFlags{
+			Port:        relayPort,
+			Interactive: relayInteractive,
+		})
+
+		return relay.Run(merged.Port, merged.Interactive)
 	},
 }
 
 func init() {
-	relayCmd.Flags().IntVar(&relayPort, "port", 4430, "TCP port for relay (HTTP will be on port+1)")
-	relayCmd.Flags().BoolVar(&relayInteractive, "interactive", true, "interactive mode")
+	relayCmd.Flags().IntVar(&relayPort, "port", 0, "TCP port for relay server (overrides config)")
+	relayCmd.Flags().BoolVar(&relayInteractive, "interactive", true, "interactive mode (overrides config)")
 }
-
