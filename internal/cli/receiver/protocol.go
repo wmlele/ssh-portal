@@ -120,16 +120,27 @@ func ConnectToRelay(relayHost string, relayPort int, receiverFP string) (*Connec
 	}, &m, nil
 }
 
+// bufferedConn wraps a net.Conn with a bufio.Reader to preserve buffered data
+type bufferedConn struct {
+	net.Conn
+	br *bufio.Reader
+}
+
+func (bc *bufferedConn) Read(p []byte) (int, error) {
+	return bc.br.Read(p)
+}
+
 // WaitForReady waits for and reads the "ready" message from the relay connection
-func WaitForReady(conn net.Conn) (*ReadyMessage, error) {
+// Returns the ready message and a buffered reader that preserves any SSH data
+func WaitForReady(conn net.Conn) (*ReadyMessage, *bufio.Reader, error) {
 	br := bufio.NewReader(conn)
 	readyLine, err := br.ReadString('\n')
 	if err != nil {
-		return nil, fmt.Errorf("failed to read ready message: %w", err)
+		return nil, nil, fmt.Errorf("failed to read ready message: %w", err)
 	}
 	var ready ReadyMessage
 	if err := json.Unmarshal([]byte(strings.TrimSpace(readyLine)), &ready); err != nil || ready.Msg != "ready" {
-		return nil, fmt.Errorf("bad ready message: %w", err)
+		return nil, nil, fmt.Errorf("bad ready message: %w", err)
 	}
-	return &ready, nil
+	return &ready, br, nil
 }

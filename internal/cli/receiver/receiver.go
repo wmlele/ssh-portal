@@ -169,7 +169,7 @@ func startSSHServer(relayHost string, relayPort int, enableSession bool, interac
 	}
 
 	// 4) Wait for "ready" message (sender has connected)
-	ready, err := WaitForReady(relayConn)
+	ready, br, err := WaitForReady(relayConn)
 	if err != nil {
 		SetError(fmt.Sprintf("failed to receive ready message: %v", err))
 		log.Printf("failed to receive ready message: %v", err)
@@ -197,6 +197,9 @@ func startSSHServer(relayHost string, relayPort int, enableSession bool, interac
 	SetSenderAddr(ready.SenderAddr)
 
 	// 5) Setup SSH server over the connection (now ready for SSH handshake)
+	// Wrap connection with buffered reader to preserve any SSH data that arrived
+	bufferedRelayConn := &bufferedConn{Conn: relayConn, br: br}
+
 	cfg := &ssh.ServerConfig{
 		PasswordCallback: func(c ssh.ConnMetadata, pass []byte) (*ssh.Permissions, error) {
 			expectedUsername := helloResp.Code
@@ -215,7 +218,7 @@ func startSSHServer(relayHost string, relayPort int, enableSession bool, interac
 	}
 	cfg.AddHostKey(signer)
 
-	sshConn, chans, reqs, err := ssh.NewServerConn(relayConn, cfg)
+	sshConn, chans, reqs, err := ssh.NewServerConn(bufferedRelayConn, cfg)
 	if err != nil {
 		SetError(fmt.Sprintf("SSH server connection failed: %v", err))
 		log.Printf("SSH server connection failed: %v", err)
