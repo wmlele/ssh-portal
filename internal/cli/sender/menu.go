@@ -3,7 +3,6 @@ package sender
 import (
 	"fmt"
 	"io"
-	"os"
 	"regexp"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -470,8 +469,7 @@ func SelectProfile(profiles []Profile, needsCode bool) (*SelectProfileResult, er
 
 	if m, ok := finalModel.(*profileMenuModel); ok {
 		if m.quitting && (m.selected == "" && m.code == "") {
-			fmt.Fprintf(os.Stderr, "Profile selection cancelled\n")
-			os.Exit(1)
+			return nil, fmt.Errorf("profile selection cancelled")
 		}
 		// If "none" was selected, set profile to empty string
 		profile := m.selected
@@ -480,8 +478,7 @@ func SelectProfile(profiles []Profile, needsCode bool) (*SelectProfileResult, er
 		}
 		// If code is required but not provided, that's an error
 		if needsCode && m.code == "" {
-			fmt.Fprintf(os.Stderr, "Code is required\n")
-			os.Exit(1)
+			return nil, fmt.Errorf("code is required")
 		}
 		return &SelectProfileResult{
 			Profile: profile,
