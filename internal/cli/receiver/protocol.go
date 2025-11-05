@@ -35,6 +35,11 @@ type HelloResponse struct {
 	Exp  int64  `json:"exp"`
 }
 
+type ErrorResponse struct {
+	Msg   string `json:"msg"`   // "error"
+	Error string `json:"error"` // error reason
+}
+
 // ReadyMessage is received from relay when sender connects
 type ReadyMessage struct {
 	Msg         string      `json:"msg"` // "ready"
@@ -94,10 +99,22 @@ func ConnectToRelay(relayHost string, relayPort int, receiverFP string, token st
 		conn.Close()
 		return nil, nil, fmt.Errorf("failed to read hello response: %w", err)
 	}
+
+	// Check if response is an error first
+	var errResp ErrorResponse
+	if err := json.Unmarshal([]byte(line), &errResp); err == nil && errResp.Msg == "error" {
+		conn.Close()
+		if errResp.Error != "" {
+			return nil, nil, fmt.Errorf("relay error: %s", errResp.Error)
+		}
+		return nil, nil, fmt.Errorf("relay error: unknown error")
+	}
+
+	// Try to unmarshal as hello_ok response
 	var m HelloResponse
 	if err := json.Unmarshal([]byte(line), &m); err != nil || m.Msg != "hello_ok" {
 		conn.Close()
-		return nil, nil, fmt.Errorf("bad hello response")
+		return nil, nil, fmt.Errorf("bad hello response: %s", line)
 	}
 
 	// 4) On same connection, send await with RID to attach
