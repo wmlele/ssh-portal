@@ -10,7 +10,8 @@ import (
 	"net"
 	"os"
 	"ssh-portal/internal/cli/usercode"
-	"strconv"
+
+	//"strconv"
 	"strings"
 	"time"
 
@@ -29,12 +30,12 @@ var debugProtocol = os.Getenv("SSH_PORTAL_DEBUG") != ""
 
 // JSONHello is the JSON hello message sent to the relay before SSH starts
 type JSONHello struct {
-	Msg  string `json:"msg"`
-	Role string `json:"role"`
-	Code string `json:"code,omitempty"`
-	RID  string `json:"rid,omitempty"`
-    Sender *SenderInfo `json:"sender,omitempty"`
-	Token string `json:"token,omitempty"`
+	Msg    string      `json:"msg"`
+	Role   string      `json:"role"`
+	Code   string      `json:"code,omitempty"`
+	RID    string      `json:"rid,omitempty"`
+	Sender *SenderInfo `json:"sender,omitempty"`
+	Token  string      `json:"token,omitempty"`
 }
 
 // JSONOKResponse is the JSON success response sent back by the relay
@@ -60,8 +61,8 @@ type ConnectionResult struct {
 
 // SenderInfo contains optional metadata about the sender advertised in hello
 type SenderInfo struct {
-    Keepalive int    `json:"keepalive,omitempty"`
-    Identity  string `json:"identity,omitempty"`
+	Keepalive int    `json:"keepalive,omitempty"`
+	Identity  string `json:"identity,omitempty"`
 }
 
 // --- Entry point ---
@@ -145,18 +146,18 @@ func ConnectAndHandshake(relayAddr, code string, senderKASeconds int, senderIden
 	}
 
 	// Optional: exp + alg
-	if expStr := fmt.Sprintf("%d", ok.Exp); expStr != "" {
-		sec, err := strconv.ParseInt(expStr, 10, 64)
-		if err != nil {
-			sock.Close()
-			return nil, fmt.Errorf("bad exp: %w", err)
-		}
-		exp := time.Unix(sec, 0)
-		if time.Now().After(exp.Add(clockSkew)) {
-			sock.Close()
-			return nil, fmt.Errorf("relay token expired at %s", exp.UTC().Format(time.RFC3339))
-		}
-	}
+	// if expStr := fmt.Sprintf("%d", ok.Exp); expStr != "" {
+	// 	sec, err := strconv.ParseInt(expStr, 10, 64)
+	// 	if err != nil {
+	// 		sock.Close()
+	// 		return nil, fmt.Errorf("bad exp: %w", err)
+	// 	}
+	// 	exp := time.Unix(sec, 0)
+	// 	if time.Now().After(exp.Add(clockSkew)) {
+	// 		sock.Close()
+	// 		return nil, fmt.Errorf("relay token expired at %s", exp.UTC().Format(time.RFC3339))
+	// 	}
+	// }
 
 	// 5) Build a connection that starts reading exactly at the SSH banner
 	sshConn := &prebufConn{Conn: sock, r: io.MultiReader(br, sock)}
