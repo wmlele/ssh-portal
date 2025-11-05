@@ -2,6 +2,7 @@ package sender
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"regexp"
 
@@ -31,6 +32,7 @@ type codeFormData struct {
 
 type profileMenuModel struct {
 	list         list.Model
+	del          *markedDelegate
 	form         *huh.Form
 	codeFormData codeFormData // Store code value for form
 	keys         profileMenuKeyMap
@@ -50,6 +52,71 @@ type profileMenuKeyMap struct {
 
 func (k profileMenuKeyMap) ShortHelp() []key.Binding {
 	return []key.Binding{k.Up, k.Down, k.Enter, k.Quit}
+}
+
+// markedDelegate renders like the default delegate, but:
+// - keeps default selected/normal coloring (cursor-based)
+// - shows a "• " marker when the row's ID == selectedID (model-chosen)
+type markedDelegate struct {
+	styles          list.DefaultItemStyles
+	showDescription bool
+	selectedID      string
+}
+
+func newMarkedDelegate(showDescription bool) *markedDelegate {
+	d := list.NewDefaultDelegate()
+	return &markedDelegate{
+		styles:          d.Styles,
+		showDescription: showDescription,
+	}
+}
+
+func (d *markedDelegate) SetSelectedID(id string) { d.selectedID = id }
+
+func (d *markedDelegate) Height() int {
+	if d.showDescription {
+		return 2
+	}
+	return 1
+}
+
+// IMPORTANT: restore the space between items like the default delegate
+func (d *markedDelegate) Spacing() int { return 1 }
+
+func (d *markedDelegate) Update(msg tea.Msg, m *list.Model) tea.Cmd { return nil }
+
+func (d *markedDelegate) Render(w io.Writer, m list.Model, index int, listItem list.Item) {
+	it, ok := listItem.(profileMenuItem)
+	if !ok {
+		return
+	}
+
+	// cursor-driven styling stays (color, etc.)
+	selectedCursor := index == m.Index()
+	titleStyle := d.styles.NormalTitle
+	descStyle := d.styles.NormalDesc
+	if selectedCursor {
+		titleStyle = d.styles.SelectedTitle
+		descStyle = d.styles.SelectedDesc
+	}
+
+	// dot is driven by your model’s chosen item, not the cursor
+	mark := ""
+	if it.id == d.selectedID {
+		mark = "• "
+	}
+
+	title := titleStyle.Render(mark + it.Title())
+
+	var row string
+	if d.showDescription && it.Description() != "" {
+		desc := descStyle.Render(it.Description())
+		row = lipgloss.JoinVertical(lipgloss.Left, title, desc)
+	} else {
+		row = title
+	}
+
+	io.WriteString(w, zone.Mark(it.id, row))
 }
 
 func newProfileMenuModel(profiles []Profile, needsCode bool) *profileMenuModel {
@@ -75,7 +142,10 @@ func newProfileMenuModel(profiles []Profile, needsCode bool) *profileMenuModel {
 		})
 	}
 
-	l := list.New(items, list.NewDefaultDelegate(), 40, 14)
+	//l := list.New(items, list.NewDefaultDelegate(), 40, 14)
+	del := newMarkedDelegate(true) // true = show description (same as default)
+	l := list.New(items, del, 40, 14)
+
 	l.Title = "Select Profile"
 	l.SetShowStatusBar(false)
 	l.SetFilteringEnabled(true)
@@ -83,6 +153,7 @@ func newProfileMenuModel(profiles []Profile, needsCode bool) *profileMenuModel {
 	// Build model first so we can bind form input directly to the model field
 	pm := &profileMenuModel{
 		list:         l,
+		del:          del,
 		form:         nil,
 		codeFormData: codeFormData{Code: ""},
 		keys: profileMenuKeyMap{
@@ -223,6 +294,7 @@ func (m *profileMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if zone.Get(v.id).InBounds(msg) {
 						if m.list.Index() == i {
 							m.selected = v.name
+							m.del.SetSelectedID(v.id)
 							if m.needsCode && m.form != nil {
 								// If we need code, don't quit yet, switch to form
 								m.formActive = true
@@ -289,6 +361,7 @@ func (m *profileMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if selected := m.list.SelectedItem(); selected != nil {
 					if item, ok := selected.(profileMenuItem); ok {
 						m.selected = item.name
+						m.del.SetSelectedID(item.id)
 						if m.needsCode && m.form != nil {
 							// If code is needed, check if form is already filled
 							if m.form.State == huh.StateCompleted && m.codeFormData.Code != "" {
