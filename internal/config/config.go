@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/spf13/viper"
@@ -15,16 +16,20 @@ func Load(cfgFile string) error {
 	if cfgFile != "" {
 		viper.SetConfigFile(cfgFile)
 	} else {
-		viper.AddConfigPath(".")
-		viper.AddConfigPath("./configs")
-		viper.SetConfigName("config")
+		// Check for .ssh-portal.yml in user's home directory
+		if homeDir, err := os.UserHomeDir(); err == nil {
+			homeConfigPath := filepath.Join(homeDir, ".ssh-portal.yml")
+			if _, err := os.Stat(homeConfigPath); err == nil {
+				// .ssh-portal.yml exists in home directory, read it
+				viper.SetConfigFile(homeConfigPath)
+			}
+		}
 	}
 
 	// Defaults
 	viper.SetDefault("log.level", "info")
-	viper.SetDefault("hello.message", "world")
 
-	// Optional config file
+	// Read config file if one was specified
 	if err := viper.ReadInConfig(); err == nil {
 		fmt.Println("Using config:", filepath.Base(viper.ConfigFileUsed()))
 	}
