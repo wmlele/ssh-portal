@@ -104,7 +104,7 @@ func ConnectToRelay(relayHost string, relayPort int, receiverFP string) (*Connec
 	relayTCP := net.JoinHostPort(relayHost, strconv.Itoa(relayPort))
 	conn, err := net.Dial("tcp", relayTCP)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to connect to relay: %w", err)
+		return nil, nil, fmt.Errorf("socket error: %w", err)
 	}
 	// 2) Send version + JSON mint
 	if _, err := fmt.Fprintln(conn, "ssh-relay/1.0"); err != nil {

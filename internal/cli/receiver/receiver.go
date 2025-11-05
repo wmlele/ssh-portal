@@ -131,8 +131,8 @@ func startSSHServer(relayHost string, relayPort int, enableSession bool, interac
 	// 2) Connect to relay and perform protocol handshake (mint + hello)
 	connResult, mintResp, err := ConnectToRelay(relayHost, relayPort, fp)
 	if err != nil {
-		SetError(fmt.Sprintf("failed to connect to relay: %v", err))
-		log.Printf("failed to connect to relay: %v", err)
+		SetError(fmt.Sprintf("relay connection issue: %v", err))
+		log.Printf("relay connection issue: %v", err)
 		return err
 	}
 	relayConn := connResult.Conn

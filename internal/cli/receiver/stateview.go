@@ -254,7 +254,12 @@ func RenderLeftPaneContent(width int, sp spinner.Model, connectedSp spinner.Mode
 
 	var content string
 	if state.Error != "" {
-		content = "ERROR: " + state.Error + "\n\nPress 'q' or Ctrl+C to quit"
+		errorStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("160")). // Red shade
+			Bold(true)
+		errorMsgStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("196")) // Bright red
+		content = errorStyle.Render("ERROR: ") + "\n" + errorMsgStyle.Render(state.Error) + "\n\nPress 'q' to quit"
 	} else if state.UserCode == "" && state.RID == "" && state.FP == "" {
 		spinnerView := sp.View()
 		content = "Waiting for connection...\n\n" + spinnerView
