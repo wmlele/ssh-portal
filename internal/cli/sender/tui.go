@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/help"
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -21,7 +22,7 @@ import (
 const (
 	maxLogLines      = 500 // Keep last 500 lines in memory
 	topSectionHeight = 70  // Percentage of available height for top section (rest goes to logs)
-	leftSectionWidth = 70  // Percentage of available width for left section (ports), rest goes to right (state)
+	leftSectionWidth = 70  // Percentage of available width for left section (ports), rest goexfs to right (state)
 )
 
 // TUI model for sender
@@ -33,6 +34,8 @@ type senderTUIModel struct {
 	rightViewport     viewport.Model
 	logViewer         *tui.LogViewer
 	help              help.Model
+	connectingSpinner spinner.Model
+	connectedSpinner  spinner.Model
 	cancel            context.CancelFunc
 	width             int
 	height            int
@@ -46,10 +49,20 @@ type senderTUIModel struct {
 }
 
 func newSenderTUIModel(logWriter *tui.LogTailWriter, cancel context.CancelFunc) *senderTUIModel {
+	connectingSp := spinner.New()
+	connectingSp.Spinner = spinner.Dot
+	connectingSp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("62"))
+
+	connectedSp := spinner.New()
+	connectedSp.Spinner = spinner.Points
+	connectedSp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("62"))
+
 	return &senderTUIModel{
-		logViewer: tui.NewLogViewer(logWriter),
-		help:      help.New(),
-		cancel:    cancel,
+		logViewer:         tui.NewLogViewer(logWriter),
+		help:              help.New(),
+		connectingSpinner: connectingSp,
+		connectedSpinner:  connectedSp,
+		cancel:            cancel,
 	}
 }
 
@@ -57,6 +70,8 @@ func (m *senderTUIModel) Init() tea.Cmd {
 	// Initialize log viewer and start ticker for updating top content
 	return tea.Batch(
 		m.logViewer.Init(),
+		m.connectingSpinner.Tick,
+		m.connectedSpinner.Tick,
 		tea.Tick(time.Millisecond*500, func(time.Time) tea.Msg {
 			return updateTopContentMsg{}
 		}),
@@ -325,6 +340,17 @@ func (m *senderTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	default:
+		// Handle spinner updates
+		var connectingSpinnerCmd, connectedSpinnerCmd tea.Cmd
+		m.connectingSpinner, connectingSpinnerCmd = m.connectingSpinner.Update(msg)
+		if connectingSpinnerCmd != nil {
+			cmds = append(cmds, connectingSpinnerCmd)
+		}
+		m.connectedSpinner, connectedSpinnerCmd = m.connectedSpinner.Update(msg)
+		if connectedSpinnerCmd != nil {
+			cmds = append(cmds, connectedSpinnerCmd)
+		}
+
 		// Handle log viewer updates first (should always process)
 		logCmd, handled := m.logViewer.Update(msg)
 		if handled && logCmd != nil {
@@ -567,7 +593,7 @@ func (m *senderTUIModel) updateTopContent() {
 	m.leftViewport.SetContent(leftContent)
 
 	// Render right side: current state information
-	rightContent := RenderStateView(m.rightViewport.Width)
+	rightContent := RenderStateView(m.rightViewport.Width, m.connectingSpinner, m.connectedSpinner)
 	m.rightViewport.SetContent(rightContent)
 }
 

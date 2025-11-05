@@ -2,6 +2,9 @@ package sender
 
 import (
 	"sync"
+
+	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // SenderState holds the current sender state
@@ -36,18 +39,23 @@ func SetStatus(status, message string) {
 }
 
 // RenderStateView renders the sender state (connection status) for the right side
-func RenderStateView(width int) string {
+func RenderStateView(width int, connectingSp spinner.Model, connectedSp spinner.Model) string {
 	state := GetState()
 
 	var content string
 	switch state.Status {
 	case "connecting":
-		content = "\nStatus: Connecting..."
+		spinnerView := connectingSp.View()
+		content = "\n" + spinnerView + " Connecting"
 		if state.Message != "" {
 			content += "\n" + state.Message
 		}
 	case "connected":
-		content = "\nStatus: Connected"
+		spinnerView := connectedSp.View()
+		connectedStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("135")). // Purple shade
+			Bold(true)
+		content = "\n" + spinnerView + " " + connectedStyle.Render("Connected")
 		if state.Message != "" {
 			content += "\n" + state.Message
 		}

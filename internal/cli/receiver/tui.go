@@ -30,6 +30,7 @@ type receiverTUIModel struct {
 	rightViewport        viewport.Model
 	logViewer            *tui.LogViewer
 	spinner              spinner.Model
+	connectedSpinner     spinner.Model
 	cancel               context.CancelFunc
 	width                int
 	height               int
@@ -39,12 +40,17 @@ type receiverTUIModel struct {
 func newReceiverTUIModel(logWriter *tui.LogTailWriter, cancel context.CancelFunc) *receiverTUIModel {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
-	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("62"))
+	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("135"))
+
+	connectedSp := spinner.New()
+	connectedSp.Spinner = spinner.Points
+	connectedSp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("62"))
 
 	return &receiverTUIModel{
-		logViewer: tui.NewLogViewer(logWriter),
-		spinner:   sp,
-		cancel:    cancel,
+		logViewer:        tui.NewLogViewer(logWriter),
+		spinner:          sp,
+		connectedSpinner: connectedSp,
+		cancel:           cancel,
 	}
 }
 
@@ -53,7 +59,8 @@ func (m *receiverTUIModel) Init() tea.Cmd {
 	return tea.Batch(
 		m.logViewer.Init(),
 		m.spinner.Tick,
-		tea.Tick(time.Millisecond*500, func(time.Time) tea.Msg {
+		m.connectedSpinner.Tick,
+		tea.Tick(time.Millisecond*200, func(time.Time) tea.Msg {
 			return updateTopContentMsg{}
 		}),
 	)
@@ -145,16 +152,20 @@ func (m *receiverTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case updateTopContentMsg:
 		m.updateTopContent()
-		return m, tea.Tick(time.Millisecond*500, func(time.Time) tea.Msg {
+		return m, tea.Tick(time.Millisecond*200, func(time.Time) tea.Msg {
 			return updateTopContentMsg{}
 		})
 
 	default:
 		// Handle spinner updates
-		var spinnerCmd tea.Cmd
+		var spinnerCmd, connectedSpinnerCmd tea.Cmd
 		m.spinner, spinnerCmd = m.spinner.Update(msg)
 		if spinnerCmd != nil {
 			cmds = append(cmds, spinnerCmd)
+		}
+		m.connectedSpinner, connectedSpinnerCmd = m.connectedSpinner.Update(msg)
+		if connectedSpinnerCmd != nil {
+			cmds = append(cmds, connectedSpinnerCmd)
 		}
 
 		// Handle table and viewport updates
@@ -209,7 +220,7 @@ func (m *receiverTUIModel) updateTopContent() {
 	m.reverseForwardsTable = UpdateReverseForwardsTable(m.reverseForwardsTable, tableWidth, bottomTableHeight)
 
 	// Render left pane: connection info
-	leftContent := RenderLeftPaneContent(m.leftViewport.Width, m.spinner)
+	leftContent := RenderLeftPaneContent(m.leftViewport.Width, m.spinner, m.connectedSpinner)
 	m.leftViewport.SetContent(leftContent)
 
 	// Render right pane: direct and reverse forwards with headers

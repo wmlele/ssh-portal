@@ -235,7 +235,7 @@ func UpdateForwardsTable(t table.Model, width, height int) table.Model {
 }
 
 // RenderLeftPaneContent renders the connection info for the left pane
-func RenderLeftPaneContent(width int, sp spinner.Model) string {
+func RenderLeftPaneContent(width int, sp spinner.Model, connectedSp spinner.Model) string {
 	state := GetState()
 
 	titleStyle := lipgloss.NewStyle().
@@ -247,6 +247,9 @@ func RenderLeftPaneContent(width int, sp spinner.Model) string {
 		Foreground(lipgloss.Color("220")). // Yellow/gold accent color
 		Bold(true)
 
+	infoStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("240"))
+
 	title := titleStyle.Render("Connection Info")
 
 	var content string
@@ -257,18 +260,29 @@ func RenderLeftPaneContent(width int, sp spinner.Model) string {
 		content = "Waiting for connection...\n\n" + spinnerView
 	} else {
 		content = "Code:      " + codeStyle.Render(state.UserCode) + "\n"
-		content += "RelayCode: " + state.RelayCode + "\n"
+		content += infoStyle.Render("RelayCode: ") + infoStyle.Render(state.RelayCode) + "\n"
 		content += "RID:       " + state.RID + "\n"
 		content += "FP:        " + state.FP
 		if !state.SSHEstablished {
 			spinnerView := sp.View()
-			content += "\n\n" + spinnerView + " Waiting for SSH..."
+			waitingStyle := lipgloss.NewStyle().
+				Foreground(lipgloss.Color("62"))
+			content += "\n\n" + spinnerView + " " + waitingStyle.Render("Waiting for SSH connection...")
 		} else {
 			if state.SenderIdentity != "" {
-				content += "\n\nIdentity:  " + state.SenderIdentity
+				identityStyle := lipgloss.NewStyle().
+					Foreground(lipgloss.Color("62"))
+				content += "\n\nIdentity:  " + identityStyle.Render(state.SenderIdentity)
 			}
 			if state.SenderAddr != "" {
-				content += "\nConnected to: " + state.SenderAddr
+				connectedSpinnerView := connectedSp.View()
+				connectedStyle := lipgloss.NewStyle().
+					Foreground(lipgloss.Color("135")). // Purple shade
+					Bold(true)
+				addressStyle := lipgloss.NewStyle().
+					Foreground(lipgloss.Color("201")). // Pink shade (more pink than text)
+					Bold(true)
+				content += "\n" + connectedSpinnerView + " " + connectedStyle.Render("Connected to: ") + addressStyle.Render(state.SenderAddr)
 			}
 		}
 	}
