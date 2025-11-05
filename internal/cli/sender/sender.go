@@ -317,9 +317,12 @@ func RunWithConfig(relayHost string, relayPort int, code string, interactive boo
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	var tuiDone <-chan struct{}
 	if interactive {
 		// Start TUI
-		if err := startTUI(ctx, cancel); err != nil {
+		var err error
+		tuiDone, err = startTUI(ctx, cancel)
+		if err != nil {
 			return fmt.Errorf("failed to start TUI: %w", err)
 		}
 	}
@@ -339,6 +342,10 @@ func RunWithConfig(relayHost string, relayPort int, code string, interactive boo
 	select {
 	case <-ctx.Done():
 		// TUI or user initiated shutdown
+		// If TUI was running, wait for it to finish cleaning up the terminal
+		if tuiDone != nil {
+			<-tuiDone
+		}
 		return nil
 	case err := <-errChan:
 		// Connection failed
@@ -348,6 +355,10 @@ func RunWithConfig(relayHost string, relayPort int, code string, interactive boo
 		}
 		// In interactive mode, wait for user to quit
 		<-ctx.Done()
+		// If TUI was running, wait for it to finish cleaning up the terminal
+		if tuiDone != nil {
+			<-tuiDone
+		}
 		return nil
 	}
 }

@@ -334,8 +334,9 @@ func (m *receiverTUIModel) View() string {
 }
 
 // startTUI starts the TUI in a goroutine and sets up log capture
-// When the TUI quits, it calls cancel to signal shutdown
-func startTUI(ctx context.Context, cancel context.CancelFunc) error {
+// When the TUI quits, it calls cancel to signal server shutdown
+// Returns a channel that will be closed when the TUI goroutine finishes
+func startTUI(ctx context.Context, cancel context.CancelFunc) (<-chan struct{}, error) {
 	originalOutput := log.Writer()
 
 	// Create log writer
@@ -348,11 +349,15 @@ func startTUI(ctx context.Context, cancel context.CancelFunc) error {
 	model := newReceiverTUIModel(logWriter, cancel)
 	p := tea.NewProgram(model, tea.WithAltScreen())
 
+	// Channel to signal when TUI goroutine finishes
+	done := make(chan struct{})
+
 	// Run TUI in a goroutine
 	go func() {
 		defer func() {
 			// Restore original log output when TUI exits
 			log.SetOutput(originalOutput)
+			close(done)
 		}()
 		if _, err := p.Run(); err != nil {
 			log.Printf("TUI error: %v", err)
@@ -361,5 +366,5 @@ func startTUI(ctx context.Context, cancel context.CancelFunc) error {
 		cancel()
 	}()
 
-	return nil
+	return done, nil
 }

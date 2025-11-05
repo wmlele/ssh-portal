@@ -91,8 +91,8 @@ func handleTCP(c net.Conn) {
 			return
 		}
 		handleReceiverConnection(c, msg.RID, br)
-    case "sender":
-        handleSenderConnection(c, msg, br)
+	case "sender":
+		handleSenderConnection(c, msg, br)
 	default:
 		log.Printf("[TCP] %s -> ERR: unknown role '%s'", remoteAddr, msg.Role)
 		SendErrorResponse(c, "bad-side")
@@ -115,7 +115,7 @@ func handleReceiverConnection(c net.Conn, rid string, br *bufio.Reader) {
 
 // handleSenderConnection processes a sender connection and pairs with receiver
 func handleSenderConnection(c net.Conn, msg *EndpointMessage, br *bufio.Reader) {
-    inv := HandleSender(c, msg.Code, msg.Sender)
+	inv := HandleSender(c, msg.Code, msg.Sender)
 	if inv == nil {
 		// Error already handled and connection closed by HandleSender
 		return
@@ -131,13 +131,13 @@ func handleSenderConnection(c net.Conn, msg *EndpointMessage, br *bufio.Reader) 
 
 	// Send "ready" message to receiver with sender address
 	alg := "" // TODO: extract from receiver connection if available
-    readyMsg := ReadyMessage{
+	readyMsg := ReadyMessage{
 		Msg:         "ready",
 		SenderAddr:  senderAddr,
 		Fingerprint: inv.ReceiverFP,
 		Exp:         inv.ExpiresAt.Unix(),
 		Alg:         alg,
-        Sender:      inv.Sender,
+		Sender:      inv.Sender,
 	}
 	if err := sendJSON(rc, readyMsg); err != nil {
 		log.Printf("[PAIR] failed to send ready to receiver: %v", err)
@@ -265,15 +265,23 @@ func Run(port int, interactive bool) error {
 		}
 	}()
 
+	var tuiDone <-chan struct{}
 	if interactive {
 		// Start TUI for interactive mode
-		if err := startTUI(ctx, cancel); err != nil {
+		var err error
+		tuiDone, err = startTUI(ctx, cancel)
+		if err != nil {
 			return fmt.Errorf("failed to start TUI: %w", err)
 		}
 	}
 
 	// Wait for shutdown signal or error
 	<-ctx.Done()
+
+	// If TUI was running, wait for it to finish cleaning up the terminal
+	if tuiDone != nil {
+		<-tuiDone
+	}
 
 	// No HTTP server to shut down (HTTP mint removed)
 

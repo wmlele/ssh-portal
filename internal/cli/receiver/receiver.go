@@ -616,9 +616,12 @@ func Run(relayHost string, relayPort int, interactive bool, session bool) error 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	var tuiDone <-chan struct{}
 	if interactive {
 		// Start TUI for interactive mode
-		if err := startTUI(ctx, cancel); err != nil {
+		var err error
+		tuiDone, err = startTUI(ctx, cancel)
+		if err != nil {
 			return fmt.Errorf("failed to start TUI: %w", err)
 		}
 	}
@@ -654,6 +657,12 @@ func Run(relayHost string, relayPort int, interactive bool, session bool) error 
 
 	// Wait for shutdown signal
 	<-ctx.Done()
+
+	// If TUI was running, wait for it to finish cleaning up the terminal
+	if tuiDone != nil {
+		<-tuiDone
+	}
+
 	log.Printf("receiver shutting down...")
 	return nil
 }
