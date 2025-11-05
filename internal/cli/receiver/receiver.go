@@ -131,6 +131,8 @@ func startSSHServer(relayHost string, relayPort int, enableSession bool, interac
 	fp := ssh.FingerprintSHA256(signer.PublicKey())
 
 	// 2) Connect to relay and perform protocol handshake (mint + hello)
+	relayAddr := net.JoinHostPort(relayHost, strconv.Itoa(relayPort))
+	log.Printf("Connecting to relay: %s", relayAddr)
 	connResult, mintResp, err := ConnectToRelay(relayHost, relayPort, fp)
 	if err != nil {
 		SetError(fmt.Sprintf("relay connection issue: %v", err))
@@ -138,6 +140,7 @@ func startSSHServer(relayHost string, relayPort int, enableSession bool, interac
 		return err
 	}
 	relayConn := connResult.Conn
+	log.Printf("Connected to relay: %s", relayAddr)
 	// Note: relayConn will be owned by sshConn after SSH handshake, so we don't defer close here
 	// We'll close it explicitly if we return before SSH is established
 
@@ -227,7 +230,7 @@ func startSSHServer(relayHost string, relayPort int, enableSession bool, interac
 	if senderAddr == "" {
 		senderAddr = sshConn.RemoteAddr().String()
 	}
-	log.Printf("SSH connection established with sender: %s", senderAddr)
+	log.Printf("SSH connection established with sender: %s via relay: %s", senderAddr, relayAddr)
 	SetSSHEstablished()
 
 	// Handle keepalive requests and monitor connection health
@@ -637,14 +640,14 @@ func Run(relayHost string, relayPort int, interactive bool, session bool) error 
 
 				if err == errConnectionClosed {
 					// Connection closed - restart after a brief delay
-					log.Printf("Sender disconnected, restarting receiver in 1 second...")
-					time.Sleep(1 * time.Second)
+					log.Printf("Sender disconnected, restarting receiver in 5 second...")
+					time.Sleep(5 * time.Second)
 					continue
 				}
 
 				// Other errors - log and retry after delay
-				log.Printf("SSH server error: %v, retrying in 2 seconds...", err)
-				time.Sleep(2 * time.Second)
+				log.Printf("SSH server error: %v, retrying in 10 seconds...", err)
+				time.Sleep(10 * time.Second)
 			}
 		}
 	}()

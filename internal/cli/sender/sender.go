@@ -36,11 +36,12 @@ func startSSHClient(ctx context.Context, relayHost string, relayPort int, code s
 	// Build relay TCP address
 	relayTCP := net.JoinHostPort(relayHost, strconv.Itoa(relayPort))
 
+	log.Printf("Connecting to relay: %s", relayTCP)
 	SetStatus("connecting", "Connecting to relay...")
 
 	// Connect and perform protocol handshake
-    // Provide hello metadata: keepalive seconds and optional identity
-    result, err := ConnectAndHandshake(relayTCP, code, int(keepaliveTimeout/time.Second), identity)
+	// Provide hello metadata: keepalive seconds and optional identity
+	result, err := ConnectAndHandshake(relayTCP, code, int(keepaliveTimeout/time.Second), identity)
 	if err != nil {
 		SetStatus("failed", fmt.Sprintf("Handshake failed: %v", err))
 		log.Printf("handshake failed: %v", err)
@@ -48,7 +49,7 @@ func startSSHClient(ctx context.Context, relayHost string, relayPort int, code s
 	}
 	defer result.Conn.Close()
 
-	log.Printf("Connected to relay %s:%d", relayHost, relayPort)
+	log.Printf("Connected to relay: %s", relayTCP)
 	SetStatus("connecting", "Establishing SSH connection...")
 
 	// Establish SSH connection
@@ -59,7 +60,7 @@ func startSSHClient(ctx context.Context, relayHost string, relayPort int, code s
 		return err
 	}
 
-	log.Printf("SSH connection established with receiver through relay %s:%d", relayHost, relayPort)
+	log.Printf("SSH connection established with receiver via relay: %s", relayTCP)
 
 	client := ssh.NewClient(cc, chans, reqs)
 

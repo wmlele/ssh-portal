@@ -41,6 +41,12 @@ const (
 	DefaultMaxLogLines = 500 // Default number of log lines to keep in memory
 )
 
+var (
+	// timestampStyle styles the timestamp with subdued info color
+	timestampStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("240"))
+)
+
 // LogTailWriter implements io.Writer and captures log messages with timestamps
 type LogTailWriter struct {
 	mu      sync.Mutex
