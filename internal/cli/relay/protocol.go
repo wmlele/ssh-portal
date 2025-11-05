@@ -28,7 +28,7 @@ func (bc *bufferedConn) Read(p []byte) (int, error) {
 
 // JSON protocol messages
 type EndpointMessage struct {
-	Msg        string `json:"msg"`  // "hello" or "mint"
+	Msg        string `json:"msg"`  // "hello", "await", or "mint"
 	Role       string `json:"role"` // "sender" or "receiver"
 	Code       string `json:"code,omitempty"`
 	RID        string `json:"rid,omitempty"`
@@ -74,7 +74,7 @@ type SenderInfo struct {
 }
 
 // ParseMessage reads the version line and a single JSON payload message.
-// It returns the parsed HelloMessage and a buffered reader preserving any extra bytes.
+// It returns the parsed EndpointMessage and a buffered reader preserving any extra bytes.
 func ParseMessage(c net.Conn) (*EndpointMessage, *bufio.Reader, error) {
 	_ = c.SetDeadline(time.Now().Add(20 * time.Second))
 	defer c.SetDeadline(time.Time{}) // clear deadline
@@ -109,7 +109,7 @@ func ParseMessage(c net.Conn) (*EndpointMessage, *bufio.Reader, error) {
 	if payload.Msg == "hello" && payload.Role == "sender" && payload.Code == "" {
 		return nil, nil, fmt.Errorf("missing code for sender")
 	}
-	if payload.Msg == "hello" && payload.Role == "receiver" && payload.RID == "" {
+	if payload.Msg == "await" && payload.Role == "receiver" && payload.RID == "" {
 		return nil, nil, fmt.Errorf("missing rid for receiver")
 	}
 	if payload.Msg == "mint" && (payload.Role != "receiver" || payload.ReceiverFP == "") {

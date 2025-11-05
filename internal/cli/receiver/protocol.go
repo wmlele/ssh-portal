@@ -12,8 +12,8 @@ import (
 
 // --- Protocol structures ---
 
-// JSONHello is the JSON hello message sent to the relay before SSH starts
-type HelloMessage struct {
+// AwaitMessage is the JSON await message sent to the relay before SSH starts
+type AwaitMessage struct {
 	Msg  string `json:"msg"`
 	Role string `json:"role"`
 	Code string `json:"code,omitempty"`
@@ -68,34 +68,9 @@ type ConnectionResult struct {
 
 // --- Protocol communication ---
 
-// (HTTP mint endpoint removed; mint is performed over TCP JSON)
-
-// ConnectAndHello connects to the relay and sends the HELLO message for a receiver
-func ConnectAndHello(relayAddr, rid string) (*ConnectionResult, error) {
-	conn, err := net.Dial("tcp", relayAddr)
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to relay: %w", err)
-	}
-
-	// Send version + JSON hello
-	if _, err := fmt.Fprintln(conn, "ssh-relay/1.0"); err != nil {
-		conn.Close()
-		return nil, fmt.Errorf("failed to send version: %w", err)
-	}
-	if err := json.NewEncoder(conn).Encode(HelloMessage{Msg: "hello", Role: "receiver", RID: rid}); err != nil {
-		conn.Close()
-		return nil, fmt.Errorf("failed to send hello: %w", err)
-	}
-
-	return &ConnectionResult{
-		Conn: conn,
-		RID:  rid,
-	}, nil
-}
-
 // ConnectToRelay performs the full protocol handshake for a receiver:
 // 1. Mints an invite using the receiver's fingerprint
-// 2. Connects to relay and sends HELLO message
+// 2. Connects to relay and sends AWAIT message
 // Returns the connection and invite information
 // relayHost is the relay server host
 // relayPort is the TCP port (HTTP will be on port+1)
@@ -128,12 +103,12 @@ func ConnectToRelay(relayHost string, relayPort int, receiverFP string) (*Connec
 		return nil, nil, fmt.Errorf("bad mint response")
 	}
 
-	// 4) On same connection, send hello with RID to attach
-	helloMsg := HelloMessage{Msg: "hello", Role: "receiver", RID: m.RID}
-	log.Printf("Sent hello to relay: role=receiver rid=%s", m.RID)
-	if err := json.NewEncoder(conn).Encode(helloMsg); err != nil {
+	// 4) On same connection, send await with RID to attach
+	awaitMsg := AwaitMessage{Msg: "await", Role: "receiver", RID: m.RID}
+	log.Printf("Sent await to relay: role=receiver rid=%s", m.RID)
+	if err := json.NewEncoder(conn).Encode(awaitMsg); err != nil {
 		conn.Close()
-		return nil, nil, fmt.Errorf("failed to send hello: %w", err)
+		return nil, nil, fmt.Errorf("failed to send await: %w", err)
 	}
 
 	// Return connection result without ready message - receiver will wait for it separately
