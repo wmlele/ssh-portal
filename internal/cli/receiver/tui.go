@@ -17,9 +17,9 @@ import (
 )
 
 const (
-	maxLogLines      = 500 // Keep last 500 lines in memory
-	topSectionHeight = 70  // Percentage of available height for top section (rest goes to logs)
-	leftSectionWidth = 40  // Percentage of available width for left section (info), rest goes to right (forwards)
+	maxLogLines       = 500                    // Keep last 500 lines in memory
+	topSectionHeight  = 70                     // Percentage of available height for top section (rest goes to logs)
+	leftSectionWidth  = 40                     // Percentage of available width for left section (info), rest goes to right (forwards)
 	tuiUpdateInterval = 200 * time.Millisecond // Interval for updating TUI content
 )
 
