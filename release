@@ -15,6 +15,42 @@ if ! command -v goreleaser &> /dev/null; then
     exit 1
 fi
 
+# Load Gitea credentials from tea config
+TEA_CONFIG="$HOME/.config/tea/config.yml"
+if [ -f "$TEA_CONFIG" ]; then
+    # Try using yq for robust YAML parsing (if available)
+    if command -v yq &> /dev/null; then
+        GITEA_TOKEN=$(yq eval '.logins[0].token' "$TEA_CONFIG" 2>/dev/null)
+        GITEA_USER=$(yq eval '.logins[0].user' "$TEA_CONFIG" 2>/dev/null)
+    fi
+    
+    # Fallback to grep/awk if yq is not available or failed
+    if [ -z "$GITEA_TOKEN" ] || [ "$GITEA_TOKEN" = "null" ]; then
+        GITEA_TOKEN=$(grep -A 15 "^logins:" "$TEA_CONFIG" | grep "^\s*token:" | head -1 | awk '{print $2}')
+    fi
+    if [ -z "$GITEA_USER" ] || [ "$GITEA_USER" = "null" ]; then
+        GITEA_USER=$(grep -A 15 "^logins:" "$TEA_CONFIG" | grep "^\s*user:" | head -1 | awk '{print $2}')
+    fi
+    
+    # Export credentials if found
+    if [ -n "$GITEA_TOKEN" ] && [ "$GITEA_TOKEN" != "null" ]; then
+        export GITEA_TOKEN="$GITEA_TOKEN"
+        export UPLOAD_GITEA_RPM_SECRET="$GITEA_TOKEN"
+        echo "✓ Loaded Gitea token from $TEA_CONFIG"
+    else
+        echo "Warning: Could not extract token from $TEA_CONFIG" >&2
+    fi
+    
+    if [ -n "$GITEA_USER" ] && [ "$GITEA_USER" != "null" ]; then
+        export UPLOAD_GITEA_RPM_USERNAME="$GITEA_USER"
+        echo "✓ Loaded Gitea username: $GITEA_USER"
+    else
+        echo "Warning: Could not extract username from $TEA_CONFIG" >&2
+    fi
+else
+    echo "Warning: Tea config not found at $TEA_CONFIG" >&2
+fi
+
 # Parse arguments
 VERSION_TYPE="${1:-snapshot}"
 
@@ -57,4 +93,4 @@ echo "Pushing tag: $TAG"
 git push origin "$TAG"
 
 echo "Running goreleaser..."
-goreleaser release --clean --skip=publish
+goreleaser release --clean
