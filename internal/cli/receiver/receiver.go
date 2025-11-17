@@ -399,6 +399,18 @@ func handleSession(ch ssh.Channel, in <-chan *ssh.Request) {
 			go io.Copy(ptyFile, ch)
 			go func() {
 				io.Copy(ch, ptyFile)
+				// Wait for shell to exit and send exit status
+				if shell != nil {
+					err := shell.Wait()
+					exitCode := 0
+					if err != nil {
+						if exitErr, ok := err.(*exec.ExitError); ok {
+							exitCode = exitErr.ExitCode()
+						}
+					}
+					// Send exit-status before closing
+					ch.SendRequest("exit-status", false, ssh.Marshal(struct{ ExitStatus uint32 }{uint32(exitCode)}))
+				}
 				ch.Close()
 				log.Printf("[SESSION] Interactive shell session ended")
 			}()
@@ -413,7 +425,15 @@ func handleSession(ch ssh.Channel, in <-chan *ssh.Request) {
 				shell.Stderr = ch.Stderr()
 				_ = shell.Start()
 				go func() {
-					shell.Wait()
+					err := shell.Wait()
+					exitCode := 0
+					if err != nil {
+						if exitErr, ok := err.(*exec.ExitError); ok {
+							exitCode = exitErr.ExitCode()
+						}
+					}
+					// Send exit-status before closing
+					ch.SendRequest("exit-status", false, ssh.Marshal(struct{ ExitStatus uint32 }{uint32(exitCode)}))
 					ch.Close()
 					log.Printf("[SESSION] Non-PTY shell session ended")
 				}()
@@ -436,7 +456,15 @@ func handleSession(ch ssh.Channel, in <-chan *ssh.Request) {
 			cmd.Stderr = ch.Stderr()
 			_ = cmd.Start()
 			go func() {
-				cmd.Wait()
+				err := cmd.Wait()
+				exitCode := 0
+				if err != nil {
+					if exitErr, ok := err.(*exec.ExitError); ok {
+						exitCode = exitErr.ExitCode()
+					}
+				}
+				// Send exit-status before closing
+				ch.SendRequest("exit-status", false, ssh.Marshal(struct{ ExitStatus uint32 }{uint32(exitCode)}))
 				ch.Close()
 				log.Printf("[SESSION] Exec command completed: %s", cmdStr)
 			}()

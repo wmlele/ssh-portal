@@ -17,10 +17,10 @@ import (
 )
 
 var (
-	sshClientMu    sync.RWMutex
-	sshClient      *ssh.Client
-	activeForwards = make(map[string]*activeForward) // key is port forward ID
-	forwardsMu     sync.RWMutex
+	sshClientMu     sync.RWMutex
+	sshClient       *ssh.Client
+	activeForwards  = make(map[string]*activeForward) // key is port forward ID
+	forwardsMu      sync.RWMutex
 	shellLaunchChan chan struct{} // Channel to signal shell launch request
 	shellLaunchMu   sync.Mutex
 )
@@ -434,7 +434,12 @@ func RunWithConfig(relayHost string, relayPort int, code string, interactive boo
 			// Launch interactive shell
 			log.Printf("Launching interactive shell...")
 			if err := interactiveShell(client); err != nil {
-				log.Printf("Shell session ended with error: %v", err)
+				// Check if it's the benign "no exit status" error
+				if err.Error() != "wait: remote command exited without exit status or exit signal" {
+					log.Printf("Shell session ended with error: %v", err)
+				} else {
+					log.Printf("Shell session ended")
+				}
 			} else {
 				log.Printf("Shell session ended")
 			}
