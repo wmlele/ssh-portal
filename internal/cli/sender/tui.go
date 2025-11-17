@@ -707,14 +707,15 @@ func (m *senderTUIModel) View() string {
 // When the TUI quits, it calls cancel to signal server shutdown
 // Returns a channel that will be closed when the TUI goroutine finishes
 func startTUI(ctx context.Context, cancel context.CancelFunc) (<-chan struct{}, error) {
-	originalOutput := log.Writer()
-
 	// Create log writer
 	logWriter := tui.NewLogTailWriter(maxLogLines)
 
-	// Redirect logs to the log writer
-	log.SetOutput(logWriter)
+	return startTUIWithLogWriter(ctx, cancel, logWriter)
+}
 
+// startTUIWithLogWriter starts the TUI with a provided log writer
+// This allows the log writer to persist across TUI restarts
+func startTUIWithLogWriter(ctx context.Context, cancel context.CancelFunc, logWriter *tui.LogTailWriter) (<-chan struct{}, error) {
 	// Create and start the TUI program
 	model := newSenderTUIModel(logWriter, cancel)
 	p := tea.NewProgram(model, tea.WithAltScreen())
@@ -724,11 +725,7 @@ func startTUI(ctx context.Context, cancel context.CancelFunc) (<-chan struct{}, 
 
 	// Run TUI in a goroutine
 	go func() {
-		defer func() {
-			// Restore original log output when TUI exits
-			log.SetOutput(originalOutput)
-			close(done)
-		}()
+		defer close(done)
 		if _, err := p.Run(); err != nil {
 			log.Printf("TUI error: %v", err)
 		}

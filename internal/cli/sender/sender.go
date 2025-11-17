@@ -12,6 +12,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
+	"ssh-portal/internal/cli/tui"
 	"ssh-portal/internal/cli/validate"
 	"ssh-portal/internal/version"
 )
@@ -354,6 +355,18 @@ func RunWithConfig(relayHost string, relayPort int, code string, interactive boo
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Create persistent log writer that survives TUI restarts
+	var logWriter *tui.LogTailWriter
+	var originalOutput io.Writer
+	if interactive {
+		originalOutput = log.Writer()
+		logWriter = tui.NewLogTailWriter(maxLogLines)
+		// Redirect logs to the log writer immediately
+		log.SetOutput(logWriter)
+		// Ensure log output is restored on exit
+		defer log.SetOutput(originalOutput)
+	}
+
 	// Start SSH client in a goroutine
 	errChan := make(chan error, 1)
 	go func() {
@@ -373,13 +386,15 @@ func RunWithConfig(relayHost string, relayPort int, code string, interactive boo
 			// Create TUI-only context that can be canceled independently
 			tuiCtx, tuiCancelFunc := context.WithCancel(context.Background())
 			tuiCancel = tuiCancelFunc
-			// Create a cancel function that only cancels TUI, not SSH
+			// Create a cancel function that cancels BOTH TUI and main context
+			// This ensures pressing q/ctrl-c actually shuts down the entire application
 			tuiOnlyCancel := func() {
 				tuiCancelFunc()
+				cancel() // Also cancel main context to shut down SSH client
 			}
-			// Start TUI
+			// Start TUI with persistent log writer
 			var err error
-			tuiDone, err = startTUI(tuiCtx, tuiOnlyCancel)
+			tuiDone, err = startTUIWithLogWriter(tuiCtx, tuiOnlyCancel, logWriter)
 			if err != nil {
 				return fmt.Errorf("failed to start TUI: %w", err)
 			}
