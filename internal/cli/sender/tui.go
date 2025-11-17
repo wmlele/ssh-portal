@@ -38,6 +38,7 @@ type senderTUIModel struct {
 	connectingSpinner spinner.Model
 	connectedSpinner  spinner.Model
 	cancel            context.CancelFunc
+	tuiOnlyCancel     context.CancelFunc // Cancel only TUI, not SSH connection
 	width             int
 	height            int
 	ready             bool
@@ -49,7 +50,7 @@ type senderTUIModel struct {
 	revFormData ReverseForwardForm
 }
 
-func newSenderTUIModel(logWriter *tui.LogTailWriter, cancel context.CancelFunc) *senderTUIModel {
+func newSenderTUIModel(logWriter *tui.LogTailWriter, cancel context.CancelFunc, tuiOnlyCancel context.CancelFunc) *senderTUIModel {
 	connectingSp := spinner.New()
 	connectingSp.Spinner = spinner.Dot
 	connectingSp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("62"))
@@ -64,6 +65,7 @@ func newSenderTUIModel(logWriter *tui.LogTailWriter, cancel context.CancelFunc) 
 		connectingSpinner: connectingSp,
 		connectedSpinner:  connectedSp,
 		cancel:            cancel,
+		tuiOnlyCancel:     tuiOnlyCancel,
 	}
 }
 
@@ -245,9 +247,9 @@ func (m *senderTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				} else {
 					// Request shell launch and exit TUI
 					RequestShellLaunch()
-					// Exit TUI (it will be restarted after shell exits)
-					if m.cancel != nil {
-						m.cancel()
+					// Exit TUI only (don't shut down SSH connection)
+					if m.tuiOnlyCancel != nil {
+						m.tuiOnlyCancel()
 					}
 					return m, tea.Quit
 				}
@@ -716,9 +718,12 @@ func startTUI(ctx context.Context, cancel context.CancelFunc) (<-chan struct{}, 
 // startTUIWithLogWriter starts the TUI with a provided log writer
 // This allows the log writer to persist across TUI restarts
 func startTUIWithLogWriter(ctx context.Context, cancel context.CancelFunc, logWriter *tui.LogTailWriter) (<-chan struct{}, error) {
+	// Create TUI context separate from main context
+	tuiCtx, tuiCancel := context.WithCancel(ctx)
+
 	// Create and start the TUI program
-	model := newSenderTUIModel(logWriter, cancel)
-	p := tea.NewProgram(model, tea.WithAltScreen())
+	model := newSenderTUIModel(logWriter, cancel, tuiCancel)
+	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithContext(tuiCtx))
 
 	// Channel to signal when TUI goroutine finishes
 	done := make(chan struct{})
@@ -729,8 +734,6 @@ func startTUIWithLogWriter(ctx context.Context, cancel context.CancelFunc, logWr
 		if _, err := p.Run(); err != nil {
 			log.Printf("TUI error: %v", err)
 		}
-		// Signal shutdown when TUI exits
-		cancel()
 	}()
 
 	return done, nil

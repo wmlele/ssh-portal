@@ -388,13 +388,14 @@ func RunWithConfig(relayHost string, relayPort int, code string, interactive boo
 			tuiCancel = tuiCancelFunc
 			// Create a cancel function that cancels BOTH TUI and main context
 			// This ensures pressing q/ctrl-c actually shuts down the entire application
-			tuiOnlyCancel := func() {
+			fullCancel := func() {
 				tuiCancelFunc()
 				cancel() // Also cancel main context to shut down SSH client
 			}
 			// Start TUI with persistent log writer
+			// Pass fullCancel for q/ctrl-c, and tuiCancelFunc will be used for shell launch
 			var err error
-			tuiDone, err = startTUIWithLogWriter(tuiCtx, tuiOnlyCancel, logWriter)
+			tuiDone, err = startTUIWithLogWriter(tuiCtx, fullCancel, logWriter)
 			if err != nil {
 				return fmt.Errorf("failed to start TUI: %w", err)
 			}
