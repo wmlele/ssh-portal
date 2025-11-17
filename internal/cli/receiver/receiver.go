@@ -277,7 +277,7 @@ func startSSHServer(relayHost string, relayPort int, enableSession bool, interac
 				continue
 			}
 			channel, reqs, _ := ch.Accept()
-			log.Printf("SSH session channel opened by sender")
+			log.Printf("SSH session channel opened by sender - interactive shell requested")
 			go handleSession(channel, reqs)
 		case "direct-tcpip":
 			handleDirectTCPIP(ch)
@@ -382,29 +382,43 @@ func handleSession(ch ssh.Channel, in <-chan *ssh.Request) {
 	for req := range in {
 		switch req.Type {
 		case "pty-req":
+			log.Printf("[SESSION] PTY requested for interactive shell")
 			//term, w, h := parsePtyReq(req.Payload)
 			shell = exec.Command(userShell())
 			//shell.Env = append(os.Environ(), "TERM="+term)
 			f, err := pty.Start(shell)
 			if err != nil {
+				log.Printf("[SESSION] Failed to start PTY: %v", err)
 				req.Reply(false, nil)
 				ch.Close()
 				return
 			}
 			ptyFile = f
+			log.Printf("[SESSION] PTY started, waiting for shell request")
 			//			setWinsize(ptyFile, h, w)
 			go io.Copy(ptyFile, ch)
-			go func() { io.Copy(ch, ptyFile); ch.Close() }()
+			go func() {
+				io.Copy(ch, ptyFile)
+				ch.Close()
+				log.Printf("[SESSION] Interactive shell session ended")
+			}()
 			req.Reply(true, nil)
 		case "shell":
 			if ptyFile == nil {
 				// no PTY requested: run non-pty shell
+				log.Printf("[SESSION] Non-PTY shell requested")
 				shell = exec.Command(userShell(), "-l")
 				shell.Stdin = ch
 				shell.Stdout = ch
 				shell.Stderr = ch.Stderr()
 				_ = shell.Start()
-				go func() { shell.Wait(); ch.Close() }()
+				go func() {
+					shell.Wait()
+					ch.Close()
+					log.Printf("[SESSION] Non-PTY shell session ended")
+				}()
+			} else {
+				log.Printf("[SESSION] Interactive shell started (PTY mode)")
 			}
 			req.Reply(true, nil)
 		case "exec":
@@ -414,12 +428,18 @@ func handleSession(ch ssh.Channel, in <-chan *ssh.Request) {
 				Cmd []byte
 			}
 			ssh.Unmarshal(req.Payload, &payload)
-			cmd := exec.Command("/bin/sh", "-c", string(payload.Cmd))
+			cmdStr := string(payload.Cmd)
+			log.Printf("[SESSION] Exec command requested: %s", cmdStr)
+			cmd := exec.Command("/bin/sh", "-c", cmdStr)
 			cmd.Stdin = ch
 			cmd.Stdout = ch
 			cmd.Stderr = ch.Stderr()
 			_ = cmd.Start()
-			go func() { cmd.Wait(); ch.Close() }()
+			go func() {
+				cmd.Wait()
+				ch.Close()
+				log.Printf("[SESSION] Exec command completed: %s", cmdStr)
+			}()
 			req.Reply(true, nil)
 		case "window-change":
 			if ptyFile != nil {

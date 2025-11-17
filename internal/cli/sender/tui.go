@@ -235,6 +235,23 @@ func (m *senderTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.updateTopContent()
 				}
 			}
+		case "s":
+			// Launch interactive shell
+			if !m.showForm && m.ready {
+				// Check if SSH client is connected
+				client := GetSSHClient()
+				if client == nil {
+					log.Printf("Cannot launch shell: SSH client not connected")
+				} else {
+					// Request shell launch and exit TUI
+					RequestShellLaunch()
+					// Exit TUI (it will be restarted after shell exits)
+					if m.cancel != nil {
+						m.cancel()
+					}
+					return m, tea.Quit
+				}
+			}
 		default:
 			// Let active table handle navigation keys (up/down) when it's focused
 			if !m.showForm && m.ready {

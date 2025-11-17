@@ -6,7 +6,6 @@ import (
 	"io"
 	"log"
 	"net"
-	"os"
 	"strconv"
 	"sync"
 	"time"
@@ -22,6 +21,8 @@ var (
 	sshClient      *ssh.Client
 	activeForwards = make(map[string]*activeForward) // key is port forward ID
 	forwardsMu     sync.RWMutex
+	shellLaunchChan chan struct{} // Channel to signal shell launch request
+	shellLaunchMu   sync.Mutex
 )
 
 type activeForward struct {
@@ -311,17 +312,25 @@ func closeAllReverseForwards() {
 	}
 }
 
-func interactiveShell(c *ssh.Client) error {
-	sess, err := c.NewSession()
-	if err != nil {
-		return err
+// GetSSHClient returns the current SSH client if connected, or nil if not connected
+func GetSSHClient() *ssh.Client {
+	sshClientMu.RLock()
+	defer sshClientMu.RUnlock()
+	return sshClient
+}
+
+// RequestShellLaunch signals that an interactive shell should be launched
+// This is called from the TUI when the user presses 's'
+func RequestShellLaunch() {
+	shellLaunchMu.Lock()
+	defer shellLaunchMu.Unlock()
+	if shellLaunchChan != nil {
+		select {
+		case shellLaunchChan <- struct{}{}:
+		default:
+			// Channel already has a pending request, ignore
+		}
 	}
-	defer sess.Close()
-	_ = sess.RequestPty("xterm-256color", 40, 120, ssh.TerminalModes{})
-	sess.Stdin = os.Stdin
-	sess.Stdout = os.Stdout
-	sess.Stderr = os.Stderr
-	return sess.Shell()
 }
 
 // Run executes the sender command
@@ -336,18 +345,14 @@ func RunWithConfig(relayHost string, relayPort int, code string, interactive boo
 		return fmt.Errorf("code is required")
 	}
 
+	// Initialize shell launch channel
+	shellLaunchMu.Lock()
+	shellLaunchChan = make(chan struct{}, 1)
+	shellLaunchMu.Unlock()
+
+	// Main context for SSH client - only canceled on actual shutdown
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-
-	var tuiDone <-chan struct{}
-	if interactive {
-		// Start TUI
-		var err error
-		tuiDone, err = startTUI(ctx, cancel)
-		if err != nil {
-			return fmt.Errorf("failed to start TUI: %w", err)
-		}
-	}
 
 	// Start SSH client in a goroutine
 	errChan := make(chan error, 1)
@@ -360,28 +365,83 @@ func RunWithConfig(relayHost string, relayPort int, code string, interactive boo
 		go applyConfigPortForwards(ctx, cfg)
 	}
 
-	// Wait for context cancellation or error
-	select {
-	case <-ctx.Done():
-		// TUI or user initiated shutdown
-		// If TUI was running, wait for it to finish cleaning up the terminal
-		if tuiDone != nil {
-			<-tuiDone
+	// Main loop: restart TUI after shell exits
+	for {
+		var tuiDone <-chan struct{}
+		var tuiCancel context.CancelFunc
+		if interactive {
+			// Create TUI-only context that can be canceled independently
+			tuiCtx, tuiCancelFunc := context.WithCancel(context.Background())
+			tuiCancel = tuiCancelFunc
+			// Create a cancel function that only cancels TUI, not SSH
+			tuiOnlyCancel := func() {
+				tuiCancelFunc()
+			}
+			// Start TUI
+			var err error
+			tuiDone, err = startTUI(tuiCtx, tuiOnlyCancel)
+			if err != nil {
+				return fmt.Errorf("failed to start TUI: %w", err)
+			}
 		}
-		return nil
-	case err := <-errChan:
-		// Connection failed
-		if err != nil && !interactive {
-			// In non-interactive mode, return the error
-			return err
+
+		// Wait for context cancellation, error, or shell launch request
+		select {
+		case <-ctx.Done():
+			// Main shutdown - cancel TUI and exit
+			if tuiCancel != nil {
+				tuiCancel()
+			}
+			// If TUI was running, wait for it to finish cleaning up the terminal
+			if tuiDone != nil {
+				<-tuiDone
+			}
+			return nil
+		case err := <-errChan:
+			// Connection failed
+			if err != nil && !interactive {
+				// In non-interactive mode, return the error
+				return err
+			}
+			// In interactive mode, wait for user to quit
+			if tuiCancel != nil {
+				tuiCancel()
+			}
+			<-ctx.Done()
+			// If TUI was running, wait for it to finish cleaning up the terminal
+			if tuiDone != nil {
+				<-tuiDone
+			}
+			return nil
+		case <-shellLaunchChan:
+			// Shell launch requested - exit TUI temporarily
+			if tuiCancel != nil {
+				tuiCancel()
+			}
+			// Wait for TUI to finish
+			if tuiDone != nil {
+				<-tuiDone
+			}
+
+			// Get SSH client and launch shell
+			client := GetSSHClient()
+			if client == nil {
+				log.Printf("Cannot launch shell: SSH client not connected")
+				// Restart TUI loop
+				continue
+			}
+
+			// Launch interactive shell
+			log.Printf("Launching interactive shell...")
+			if err := interactiveShell(client); err != nil {
+				log.Printf("Shell session ended with error: %v", err)
+			} else {
+				log.Printf("Shell session ended")
+			}
+
+			// Restart TUI after shell exits (continue loop)
+			continue
 		}
-		// In interactive mode, wait for user to quit
-		<-ctx.Done()
-		// If TUI was running, wait for it to finish cleaning up the terminal
-		if tuiDone != nil {
-			<-tuiDone
-		}
-		return nil
 	}
 }
 
