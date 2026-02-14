@@ -71,11 +71,14 @@ func ConnectAndHandshake(relayAddr, code string, senderKASeconds int, senderIden
 	// Parse code to separate relay code from local secret
 	relayCode, _, fullCode, _ := usercode.ParseUserCode(code)
 
-	// 1) Connect
-	sock, err := net.Dial("tcp", relayAddr)
+	// 1) Connect (with timeout)
+	sock, err := net.DialTimeout("tcp", relayAddr, 10*time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("connect relay: %w", err)
 	}
+
+	// Set a deadline for the entire handshake phase (send hello + read response)
+	_ = sock.SetDeadline(time.Now().Add(20 * time.Second))
 
 	// 2) Send version + JSON hello (only relay code to relay)
 	if _, err := fmt.Fprintln(sock, "ssh-relay/1.0"); err != nil {
@@ -158,6 +161,9 @@ func ConnectAndHandshake(relayAddr, code string, senderKASeconds int, senderIden
 	// 		return nil, fmt.Errorf("relay token expired at %s", exp.UTC().Format(time.RFC3339))
 	// 	}
 	// }
+
+	// Clear the handshake deadline before SSH takes over
+	_ = sock.SetDeadline(time.Time{})
 
 	// 5) Build a connection that starts reading exactly at the SSH banner
 	sshConn := &prebufConn{Conn: sock, r: io.MultiReader(br, sock)}
