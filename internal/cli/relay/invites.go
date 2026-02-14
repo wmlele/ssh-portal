@@ -46,6 +46,18 @@ type EventCallbacks struct {
 	OnClosedSplice func(*Splice)
 }
 
+// Rate limiting for code guessing
+const (
+	rateLimitThreshold = 3              // free attempts before throttling
+	rateLimitDelay     = 3 * time.Second // delay per attempt once throttled
+	rateLimitWindow    = time.Minute     // failures expire after this
+)
+
+type rateLimitEntry struct {
+	count    int
+	lastFail time.Time
+}
+
 var (
 	invMu   sync.RWMutex
 	invByID = map[string]*Invite{}
@@ -53,6 +65,9 @@ var (
 
 	spliceMu sync.RWMutex
 	splices  = map[string]*Splice{}
+
+	rateMu         sync.Mutex
+	failedAttempts = map[string]*rateLimitEntry{}
 
 	callbacks *EventCallbacks
 )
@@ -197,10 +212,64 @@ func cleanupLoop() {
 		if cleaned > 0 {
 			log.Printf("[CLEANUP] removed %d expired invite(s)", cleaned)
 		}
+		cleanupRateLimitEntries()
 	}
 }
 
-// (HTTP mint endpoint removed; mint is now done over TCP JSON)
+// checkRateLimit sleeps if the given IP has exceeded the failure threshold.
+func checkRateLimit(ip string) {
+	rateMu.Lock()
+	entry := failedAttempts[ip]
+	rateMu.Unlock()
+
+	if entry == nil {
+		return
+	}
+	if time.Since(entry.lastFail) > rateLimitWindow {
+		return
+	}
+	if entry.count >= rateLimitThreshold {
+		log.Printf("[RATE] throttling %s (%d failures)", ip, entry.count)
+		time.Sleep(rateLimitDelay)
+	}
+}
+
+// recordFailedAttempt increments the failure counter for an IP.
+func recordFailedAttempt(ip string) {
+	rateMu.Lock()
+	defer rateMu.Unlock()
+
+	entry := failedAttempts[ip]
+	if entry == nil {
+		entry = &rateLimitEntry{}
+		failedAttempts[ip] = entry
+	}
+	// Reset if the window has elapsed since the last failure.
+	if time.Since(entry.lastFail) > rateLimitWindow {
+		entry.count = 0
+	}
+	entry.count++
+	entry.lastFail = time.Now()
+}
+
+// clearFailedAttempts removes the failure record for an IP.
+func clearFailedAttempts(ip string) {
+	rateMu.Lock()
+	delete(failedAttempts, ip)
+	rateMu.Unlock()
+}
+
+// cleanupRateLimitEntries removes stale rate-limit entries.
+func cleanupRateLimitEntries() {
+	rateMu.Lock()
+	defer rateMu.Unlock()
+	now := time.Now()
+	for ip, entry := range failedAttempts {
+		if now.Sub(entry.lastFail) > rateLimitWindow {
+			delete(failedAttempts, ip)
+		}
+	}
+}
 
 func randB32(n int) string {
 	b := make([]byte, n)

@@ -200,15 +200,22 @@ func HandleReceiver(c net.Conn, rid string, br *bufio.Reader) (*Invite, net.Conn
 // Returns the invite if ready for pairing, nil on error
 func HandleSender(c net.Conn, code string, meta *SenderInfo) *Invite {
 	remoteAddr := c.RemoteAddr().String()
+	ip, _, _ := net.SplitHostPort(remoteAddr)
 	log.Printf("[TCP] %s -> sender connecting with code=%s", remoteAddr, code)
+
+	// Throttle after repeated failures from this IP
+	checkRateLimit(ip)
 
 	inv := GetByCode(code)
 	if inv == nil || time.Now().After(inv.ExpiresAt) || inv.ReceiverConn == nil {
+		recordFailedAttempt(ip)
 		log.Printf("[TCP] %s -> ERR: code %s not ready (invalid/expired/no receiver)", remoteAddr, code)
 		SendErrorResponse(c, "not-ready")
 		c.Close()
 		return nil
 	}
+
+	clearFailedAttempts(ip)
 
 	// Attach sender metadata to invite for forwarding to receiver
 	if meta != nil {
