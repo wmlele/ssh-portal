@@ -276,7 +276,11 @@ func startSSHServer(relayHost string, relayPort int, enableSession bool, interac
 				ch.Reject(ssh.Prohibited, "session handling disabled")
 				continue
 			}
-			channel, reqs, _ := ch.Accept()
+			channel, reqs, err := ch.Accept()
+			if err != nil {
+				log.Printf("Failed to accept session channel: %v", err)
+				continue
+			}
 			log.Printf("SSH session channel opened by sender")
 			go handleSession(channel, reqs)
 		case "direct-tcpip":
@@ -310,7 +314,11 @@ func handleDirectTCPIP(ch ssh.NewChannel) {
 		ch.Reject(ssh.ConnectionFailed, "bad payload")
 		return
 	}
-	channel, reqs, _ := ch.Accept()
+	channel, reqs, err := ch.Accept()
+	if err != nil {
+		log.Printf("[DIRECT-TCPIP] failed to accept channel: %v", err)
+		return
+	}
 	go discard(reqs)
 
 	// Get sender address from state
@@ -354,9 +362,9 @@ func handleDirectTCPIP(ch ssh.NewChannel) {
 	}
 
 	// Start forwarding in both directions
-	go io.Copy(up, channel)
-	go func() {
-		io.Copy(channel, up)
+	// Use sync.Once to ensure cleanup runs exactly once regardless of which direction finishes first
+	var once sync.Once
+	cleanup := func() {
 		channel.Close()
 		up.Close()
 
@@ -367,11 +375,22 @@ func handleDirectTCPIP(ch ssh.NewChannel) {
 
 		log.Printf("[DIRECT-TCPIP] closed: id=%s origin=%s:%d -> dest=%s:%d",
 			dtcp.ID, msg.OriginAddr, msg.OriginPort, msg.DestAddr, msg.DestPort)
+	}
+	go func() {
+		io.Copy(up, channel)
+		once.Do(cleanup)
+	}()
+	go func() {
+		io.Copy(channel, up)
+		once.Do(cleanup)
 	}()
 }
 
 func discard(reqs <-chan *ssh.Request) {
-	for range reqs {
+	for req := range reqs {
+		if req.WantReply {
+			req.Reply(false, nil)
+		}
 	}
 }
 
