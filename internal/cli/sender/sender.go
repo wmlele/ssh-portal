@@ -6,7 +6,6 @@ import (
 	"io"
 	"log"
 	"net"
-	"os"
 	"strconv"
 	"sync"
 	"time"
@@ -311,26 +310,13 @@ func closeAllReverseForwards() {
 	}
 }
 
-func interactiveShell(c *ssh.Client) error {
-	sess, err := c.NewSession()
-	if err != nil {
-		return err
-	}
-	defer sess.Close()
-	_ = sess.RequestPty("xterm-256color", 40, 120, ssh.TerminalModes{})
-	sess.Stdin = os.Stdin
-	sess.Stdout = os.Stdout
-	sess.Stderr = os.Stderr
-	return sess.Shell()
-}
-
 // Run executes the sender command
-func Run(relayHost string, relayPort int, code string, interactive bool, keepaliveTimeout time.Duration, identity string, token string) error {
-	return RunWithConfig(relayHost, relayPort, code, interactive, keepaliveTimeout, identity, token, nil)
+func Run(relayHost string, relayPort int, code string, interactive bool, keepaliveTimeout time.Duration, identity string, token string, shell bool) error {
+	return RunWithConfig(relayHost, relayPort, code, interactive, keepaliveTimeout, identity, token, nil, shell)
 }
 
 // RunWithConfig executes the sender command with configuration
-func RunWithConfig(relayHost string, relayPort int, code string, interactive bool, keepaliveTimeout time.Duration, identity string, token string, cfg *Config) error {
+func RunWithConfig(relayHost string, relayPort int, code string, interactive bool, keepaliveTimeout time.Duration, identity string, token string, cfg *Config, shell bool) error {
 	log.Printf("Starting sender version %s", version.String())
 	if code == "" {
 		return fmt.Errorf("code is required")
@@ -338,6 +324,34 @@ func RunWithConfig(relayHost string, relayPort int, code string, interactive boo
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	// Shell mode: skip TUI, connect, open remote shell, exit when done
+	if shell {
+		// Start SSH client in a goroutine
+		errChan := make(chan error, 1)
+		go func() {
+			errChan <- startSSHClient(ctx, relayHost, relayPort, code, keepaliveTimeout, identity, token)
+		}()
+
+		// Apply port forwards from config after SSH connection is established
+		if cfg != nil && (len(cfg.Local) > 0 || len(cfg.Remote) > 0) {
+			go applyConfigPortForwards(ctx, cfg)
+		}
+
+		// Wait for SSH client to be available
+		client, err := waitForSSHClient(ctx, errChan)
+		if err != nil {
+			return err
+		}
+
+		// Run shell (blocks until shell exits)
+		shellErr := NewShellCmd(client).Run()
+		cancel()
+		if shellErr != nil {
+			return fmt.Errorf("shell session ended: %w", shellErr)
+		}
+		return nil
+	}
 
 	var tuiDone <-chan struct{}
 	if interactive {
@@ -409,6 +423,30 @@ func applyConfigPortForwards(ctx context.Context, cfg *Config) {
 				// SSH client is available, proceed to apply port forwards
 				applyPortForwards(cfg)
 				return
+			}
+		}
+	}
+}
+
+// waitForSSHClient polls until the SSH client is available or an error occurs
+func waitForSSHClient(ctx context.Context, errChan <-chan error) (*ssh.Client, error) {
+	maxWait := 30 * time.Second
+	checkInterval := 500 * time.Millisecond
+	ticker := time.NewTicker(checkInterval)
+	defer ticker.Stop()
+	timeout := time.After(maxWait)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("context cancelled while waiting for SSH connection")
+		case err := <-errChan:
+			return nil, fmt.Errorf("SSH connection failed: %w", err)
+		case <-timeout:
+			return nil, fmt.Errorf("timeout waiting for SSH connection")
+		case <-ticker.C:
+			if client := GetSSHClient(); client != nil {
+				return client, nil
 			}
 		}
 	}

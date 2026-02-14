@@ -6,7 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 
-	//"encoding/binary"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"log"
@@ -15,10 +15,7 @@ import (
 	"os/exec"
 	"strconv"
 	"sync"
-
-	//	"syscall"
 	"time"
-	//	"unsafe"
 
 	"github.com/creack/pty"
 	"golang.org/x/crypto/ssh"
@@ -394,61 +391,119 @@ func discard(reqs <-chan *ssh.Request) {
 	}
 }
 
-// session: simple PTY shell
+// handleSession handles SSH session channels (shell, exec, pty)
 func handleSession(ch ssh.Channel, in <-chan *ssh.Request) {
-	var ptyFile *os.File
-	var shell *exec.Cmd
+	var (
+		ptyFile      *os.File
+		ptyRequested bool
+		termEnv      string
+		winCols      uint32
+		winRows      uint32
+		cmd          *exec.Cmd
+	)
+
+	defer func() {
+		if ptyFile != nil {
+			ptyFile.Close()
+		}
+	}()
+
 	for req := range in {
 		switch req.Type {
 		case "pty-req":
-			//term, w, h := parsePtyReq(req.Payload)
-			shell = exec.Command(userShell())
-			//shell.Env = append(os.Environ(), "TERM="+term)
-			f, err := pty.Start(shell)
-			if err != nil {
+			termEnv, winCols, winRows = parsePtyReq(req.Payload)
+			ptyRequested = true
+			req.Reply(true, nil)
+
+		case "shell":
+			if cmd != nil {
+				req.Reply(false, nil)
+				continue
+			}
+			cmd = exec.Command(userShell(), "-l")
+			if err := startCommand(ch, cmd, ptyRequested, &ptyFile, termEnv, winCols, winRows); err != nil {
+				log.Printf("Failed to start shell: %v", err)
 				req.Reply(false, nil)
 				ch.Close()
 				return
 			}
-			ptyFile = f
-			//			setWinsize(ptyFile, h, w)
-			go io.Copy(ptyFile, ch)
-			go func() { io.Copy(ch, ptyFile); ch.Close() }()
 			req.Reply(true, nil)
-		case "shell":
-			if ptyFile == nil {
-				// no PTY requested: run non-pty shell
-				shell = exec.Command(userShell(), "-l")
-				shell.Stdin = ch
-				shell.Stdout = ch
-				shell.Stderr = ch.Stderr()
-				_ = shell.Start()
-				go func() { shell.Wait(); ch.Close() }()
-			}
-			req.Reply(true, nil)
+			go sendExitStatus(cmd, ch)
+
 		case "exec":
-			// run single command without PTY
-			var payload struct {
-				Len uint32
-				Cmd []byte
+			if cmd != nil {
+				req.Reply(false, nil)
+				continue
 			}
-			ssh.Unmarshal(req.Payload, &payload)
-			cmd := exec.Command("/bin/sh", "-c", string(payload.Cmd))
-			cmd.Stdin = ch
-			cmd.Stdout = ch
-			cmd.Stderr = ch.Stderr()
-			_ = cmd.Start()
-			go func() { cmd.Wait(); ch.Close() }()
+			var payload struct{ Cmd string }
+			if err := ssh.Unmarshal(req.Payload, &payload); err != nil {
+				req.Reply(false, nil)
+				continue
+			}
+			cmd = exec.Command("/bin/sh", "-c", payload.Cmd)
+			if err := startCommand(ch, cmd, ptyRequested, &ptyFile, termEnv, winCols, winRows); err != nil {
+				log.Printf("Failed to start exec command: %v", err)
+				req.Reply(false, nil)
+				ch.Close()
+				return
+			}
 			req.Reply(true, nil)
+			go sendExitStatus(cmd, ch)
+
 		case "window-change":
 			if ptyFile != nil {
-				//_, w, h := parseWinChg(req.Payload)
-				//				setWinsize(ptyFile, h, w)
+				winCols, winRows = parseWinChg(req.Payload)
+				pty.Setsize(ptyFile, &pty.Winsize{
+					Rows: uint16(winRows),
+					Cols: uint16(winCols),
+				})
 			}
+
 		default:
 			req.Reply(false, nil)
 		}
 	}
+}
+
+// startCommand starts a command with or without a PTY and wires up I/O to the SSH channel
+func startCommand(ch ssh.Channel, cmd *exec.Cmd, usePTY bool, ptyFile **os.File, termEnv string, cols, rows uint32) error {
+	if termEnv != "" {
+		cmd.Env = append(os.Environ(), "TERM="+termEnv)
+	}
+
+	if usePTY {
+		ws := &pty.Winsize{Rows: uint16(rows), Cols: uint16(cols)}
+		f, err := pty.StartWithSize(cmd, ws)
+		if err != nil {
+			return err
+		}
+		*ptyFile = f
+		go io.Copy(f, ch)
+		go io.Copy(ch, f)
+	} else {
+		cmd.Stdin = ch
+		cmd.Stdout = ch
+		cmd.Stderr = ch.Stderr()
+		if err := cmd.Start(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// sendExitStatus waits for the command to finish, sends exit-status to the client, then closes the channel
+func sendExitStatus(cmd *exec.Cmd, ch ssh.Channel) {
+	err := cmd.Wait()
+	status := uint32(0)
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			status = uint32(exitErr.ExitCode())
+		} else {
+			status = 1
+		}
+	}
+	ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{status}))
+	ch.Close()
 }
 
 func userShell() string {
@@ -459,7 +514,7 @@ func userShell() string {
 }
 
 // unmarshalString parses an SSH string: 4-byte length (big-endian) + string data
-/* func unmarshalString(b []byte) (string, []byte, error) {
+func unmarshalString(b []byte) (string, []byte, error) {
 	if len(b) < 4 {
 		return "", nil, fmt.Errorf("insufficient data for string length")
 	}
@@ -486,16 +541,12 @@ func parsePtyReq(b []byte) (term string, cols, rows uint32) {
 	rows = unmarshalUint32(rest[4:])
 	return term, cols, rows
 }
-func parseWinChg(b []byte) (w, c, r uint32) {
-	c = unmarshalUint32(b)     // cols
-	r = unmarshalUint32(b[4:]) // rows
-	return 0, c, r
-} */
 
-/* func setWinsize(f *os.File, h, w uint32) {
-	ws := &struct{ Row, Col, X, Y uint16 }{uint16(h), uint16(w), 0, 0}
-	_, _, _ = syscall.Syscall(syscall.SYS_IOCTL, f.Fd(), uintptr(syscall.TIOCSWINSZ), uintptr(unsafe.Pointer(ws)))
-} */
+func parseWinChg(b []byte) (cols, rows uint32) {
+	cols = unmarshalUint32(b)
+	rows = unmarshalUint32(b[4:])
+	return cols, rows
+}
 
 func handleGlobal(reqs <-chan *ssh.Request, conn *ssh.ServerConn, keepaliveMu *sync.Mutex, lastKeepalive *time.Time) {
 	for req := range reqs {

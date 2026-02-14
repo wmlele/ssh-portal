@@ -286,6 +286,10 @@ func RenderLeftPaneContent(width int, portsTable table.Model, reversePortsTable 
 			key.WithHelp("d", "delete port forward"),
 		),
 		key.NewBinding(
+			key.WithKeys("s"),
+			key.WithHelp("s", "remote shell"),
+		),
+		key.NewBinding(
 			key.WithKeys("tab"),
 			key.WithHelp("tab", "switch table"),
 		),

@@ -227,6 +227,18 @@ func (m *senderTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.portForm = NewReverseForwardForm(m.leftViewport.Width, &m.revFormData)
 				return m, m.portForm.Init()
 			}
+		case "s":
+			// Open remote shell (suspends TUI)
+			if !m.showForm && m.ready {
+				client := GetSSHClient()
+				if client == nil {
+					log.Printf("Cannot open shell: SSH client not connected")
+				} else {
+					return m, tea.Exec(NewShellCmd(client), func(err error) tea.Msg {
+						return shellExitMsg{err: err}
+					})
+				}
+			}
 		case "d":
 			// Delete selected port forward
 			if !m.showForm && m.ready {
@@ -325,6 +337,18 @@ func (m *senderTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if rightCmd != nil {
 			cmds = append(cmds, rightCmd)
 		}
+
+	case shellExitMsg:
+		if msg.err != nil {
+			log.Printf("Shell session ended with error: %v", msg.err)
+		} else {
+			log.Printf("Shell session ended")
+		}
+		// Resume normal TUI operation
+		m.updateTopContent()
+		return m, tea.Tick(tuiUpdateInterval, func(time.Time) tea.Msg {
+			return updateTopContentMsg{}
+		})
 
 	case updateTopContentMsg:
 		// Only update content if form is not shown (form handles its own updates)

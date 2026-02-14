@@ -20,6 +20,7 @@ var (
 	senderProfile          string
 	senderMenu             bool
 	senderToken            string
+	senderShell            bool
 )
 
 var senderCmd = &cobra.Command{
@@ -120,7 +121,7 @@ var senderCmd = &cobra.Command{
 		}
 
 		// Run sender with merged configuration
-		return sender.RunWithConfig(relayHost, relayPort, code, interactive, keepaliveTimeout, identity, token, mergedCfg)
+		return sender.RunWithConfig(relayHost, relayPort, code, interactive, keepaliveTimeout, identity, token, mergedCfg, senderShell)
 	},
 }
 
@@ -134,6 +135,7 @@ func init() {
 	senderCmd.Flags().StringVar(&senderToken, "token", "", "optional token to send in hello message")
 	senderCmd.Flags().StringVar(&senderProfile, "profile", "", "profile name to use from config file")
 	senderCmd.Flags().BoolVar(&senderMenu, "menu", true, "show profile selection menu if profiles exist")
+	senderCmd.Flags().BoolVar(&senderShell, "shell", false, "open a remote shell on the receiver (no TUI)")
 	_ = viper.BindPFlag("sender.code", senderCmd.Flags().Lookup("code"))
 	_ = viper.BindEnv("sender.code", "SSH_PORTAL_SENDER_CODE")
 }
